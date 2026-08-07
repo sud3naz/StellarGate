@@ -250,13 +250,32 @@ test('a burn that bought no activation is not a proof', async () => {
   );
 });
 
-test('a paid activation goes through', async () => {
+test('a paid activation goes through, once the funder adds its signature', async () => {
   const result = await submit('https://horizon.example', activationXdr(), {
     networkPassphrase: passphrase,
     paidBurn: { txHash: '0xaf40', activate: true },
+    funderSigner: funderKey,
     fetchImpl: response({ hash: 'abc123' }, 200),
   });
   assert.equal(result.ok, true);
+});
+
+/**
+ * The signature is the gate, not just a formality. A proof with no funder to
+ * sign cannot be turned into three XLM leaving, which is what makes handing
+ * the unsigned setup to a browser safe in the first place.
+ */
+test('a proof without the funder is still not a payment', async () => {
+  await assert.rejects(
+    submit('https://horizon.example', activationXdr(), {
+      networkPassphrase: passphrase,
+      paidBurn: { txHash: '0xaf40', activate: true },
+      fetchImpl: async () => {
+        throw new Error('Horizon must not be reached');
+      },
+    }),
+    /funder/,
+  );
 });
 
 /// Not gated, because that user never owed us anything.

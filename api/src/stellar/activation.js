@@ -157,11 +157,25 @@ export function spendsOurXlm(signedXdr, networkPassphrase) {
 }
 
 /**
- * Submits a setup that was signed earlier.
+ * Submits a setup that was signed earlier, adding the last signature it needs.
  *
  * @param paidBurn A proof from {verifyPaidBurn}, required when the transaction
  *        sends XLM. Not a flag — a value that can only be got by reading the
  *        burn receipt off the source chain.
+ * @param funderSigner The keypair whose XLM is being sent. Signs **here**,
+ *        after the proof, and never before.
+ *
+ * That last part is the whole shape of it. The setup has to be built by us —
+ * the browser cannot know the channel's sequence number or the funder's
+ * address — and it has to be signed by the user before the burn, because
+ * afterwards they may be gone. But a transaction that leaves here already
+ * carrying the funder's signature is a transaction the user can simply submit
+ * themselves: three XLM, no burn, once per request. That is the attack the
+ * ordering was supposed to prevent, arriving by post.
+ *
+ * So the funder signs last, on this side of the gate. What the browser holds
+ * in the meantime is real and useless: valid, theirs, and short exactly the
+ * signature that makes `createAccount` work.
  *
  * This is where the gate lives, rather than beside it. `flow.js` already
  * refuses to provision a transfer that has not paid, and on 7 August that was
@@ -180,19 +194,29 @@ export function spendsOurXlm(signedXdr, networkPassphrase) {
 export async function submit(
   horizon,
   signedXdr,
-  { networkPassphrase, paidBurn = null, fetchImpl = fetch } = {},
+  { networkPassphrase, paidBurn = null, funderSigner = null, fetchImpl = fetch } = {},
 ) {
   if (!networkPassphrase) {
     throw new Error('submit needs the network passphrase to see what it is submitting');
   }
+
+  let toSend = signedXdr;
+
   if (spendsOurXlm(signedXdr, networkPassphrase)) {
     assertPaidForActivation(paidBurn);
+
+    if (!funderSigner) {
+      throw new Error('a transaction that sends XLM needs the funder to sign it here');
+    }
+    const tx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+    tx.sign(funderSigner);
+    toSend = tx.toXDR();
   }
 
   const response = await fetchImpl(`${horizon}/transactions`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ tx: signedXdr }).toString(),
+    body: new URLSearchParams({ tx: toSend }).toString(),
   });
 
   const body = await response.json().catch(() => ({}));

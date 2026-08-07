@@ -16,6 +16,7 @@ import { verifyPaidBurn } from './watcher/burn.js';
 import { IRIS, fetchAttestation } from './watcher/attestation.js';
 import { deliver, FORWARDER } from './watcher/deliver.js';
 import { submit } from './stellar/activation.js';
+import { buildSetupFor } from './stellar/setup.js';
 import { run } from './watcher/run.js';
 
 function required(env, name) {
@@ -45,8 +46,38 @@ export function assemble(env = process.env) {
   const attest = (txHash) =>
     fetchAttestation(isTestnet ? IRIS.testnet : IRIS.public, sourceDomain, txHash);
 
+  // The funder signs here and nowhere earlier: the setup that goes out to the
+  // browser is short exactly this signature, so it cannot be submitted for
+  // three XLM by anyone who never burned.
+  const funder = env.BRIDGE_FUNDER_SECRET
+    ? Keypair.fromSecret(env.BRIDGE_FUNDER_SECRET)
+    : null;
+  const channel = env.BRIDGE_CHANNEL_SECRET
+    ? Keypair.fromSecret(env.BRIDGE_CHANNEL_SECRET)
+    : null;
+
   const submitSetup = (signedXdr, paidBurn) =>
-    submit(chosen.horizon, signedXdr, { networkPassphrase: passphrase, paidBurn });
+    submit(chosen.horizon, signedXdr, {
+      networkPassphrase: passphrase,
+      paidBurn,
+      funderSigner: funder,
+    });
+
+  const buildSetup =
+    channel && funder
+      ? (recipient, { amount } = {}) =>
+          buildSetupFor(recipient, {
+            horizon: chosen.horizon,
+            asset: chosen.usdc,
+            networkPassphrase: passphrase,
+            channelSigner: channel,
+            funderAddress: funder.publicKey(),
+            startingXlm: CFG.activationXlm,
+            timeoutSeconds: CFG.setupTimeoutSeconds,
+            baseFee: CFG.baseFee,
+            amount,
+          })
+      : null;
 
   const deliverMessage = (message, attestation) =>
     deliver({
@@ -66,6 +97,7 @@ export function assemble(env = process.env) {
     attest,
     submitSetup,
     deliver: deliverMessage,
+    buildSetup,
     port: Number(env.PORT ?? 8787),
     cursor: env.BRIDGE_CURSOR ? Number(env.BRIDGE_CURSOR) : undefined,
   };
@@ -75,7 +107,7 @@ export async function main(env = process.env) {
   const parts = assemble(env);
   const controller = new AbortController();
 
-  const server = listen(createHandler({ store: parts.store, verifyBurn: parts.verifyBurn }), {
+  const server = listen(createHandler({ store: parts.store, verifyBurn: parts.verifyBurn, buildSetup: parts.buildSetup }), {
     port: parts.port,
     createServer,
   });

@@ -76,6 +76,16 @@ point nothing has happened; once they have burned, the transaction that makes
 the far side work is already in hand, so there is no state where their money is
 taken and cannot be delivered.
 
+What the browser is handed to sign is deliberately incomplete. The setup has
+to be built here — a page cannot know the channel account's sequence number,
+and has no business knowing the funder's address — but a setup that leaves
+this server already carrying the **funder's** signature is one the user can
+simply submit themselves: three XLM, no burn, once per request. That is the
+attack the ordering was meant to prevent, arriving by post instead. So the
+channel signs, because it owns the sequence, and the funder signs on the far
+side of the burn in `submit()`. What waits in the browser is real, theirs, and
+short exactly the signature that makes `createAccount` work.
+
 Funding only after a paid burn closes the obvious attack. The activation XLM is
 **spent, not lent** — unrecoverable — so an endpoint that creates accounts on
 request costs three XLM per browser tab to drain. `flow.js` gates it twice: on
@@ -182,6 +192,7 @@ src/StellarStrkey.sol         base32 + CRC16, so a typo cannot reach Stellar
 api/src/flow.js               the ordering, as rules rather than as prose
 api/src/stellar/account.js    what a destination is missing, and what it costs
 api/src/stellar/activation.js buying an account, or just the trustline
+api/src/stellar/setup.js      builds what the user signs, and signs half of it
 api/src/watcher/index.js      the ordering, as one step that can be tested
 api/src/watcher/burn.js       proof that a burn happened and paid for this
 api/src/watcher/store.js      one burn buys one activation, across restarts
@@ -194,16 +205,19 @@ api/src/main.js               wiring, and the only file that reads the env
 api/src/config.js             networks, issuers, Circle's contracts
 
 web/index.html                the bridge, drawn as a bridge
-web/app.js                    wallets, the live destination check, the quote
+web/app.js                    wallets, the destination check, the transfer
+web/abi.js                    the two calls, encoded by hand and checked
 web/strkey.js                 the browser copy of the address check
+
+script/Deploy.s.sol           deployment, which guesses at nothing
 ```
 
 ```bash
 forge test          # 47
-cd api && npm test  # 127, the browser included
+cd api && npm test  # 140, the browser included
 ```
 
-174 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+187 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
@@ -261,11 +275,16 @@ is not gated behind a fee that user never owed.
 
 ## What is not here yet
 
-- Deployment scripts. Deliberately — nothing gets deployed without being asked.
-- The frontend does not talk to the watcher yet. It knows how to take the
-  signature and make the burn; handing the signed setup to `POST /transfers`
-  is the last wire, and until it is joined an activation has to be posted by
-  hand.
+- Concurrency. A channel account exists so that two transfers in flight
+  cannot invalidate each other's sequence number, and every run so far has
+  been one at a time — so the reason the channel exists is the one thing it
+  has not been tested against. A pool of them is a config change; proving it
+  needs two burns at once.
+- Muxed `M…` destinations. The contract validates them and the forwarder
+  parses them, which is the whole answer to exchange deposits, and no transfer
+  has been sent to one.
+- How long a fast attestation stays valid, and what a watcher should do as it
+  approaches expiry.
 - Coverage for the two shapes `plan()` returns that testnet never exercised:
   `trustline`, and the `topup` that carries the argument this whole thing
   rests on. Also the `op_no_trust` retry, muxed `M…` addresses, and anything

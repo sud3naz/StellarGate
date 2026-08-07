@@ -57,6 +57,46 @@ The same thing at hard finality, for comparison — same code, slower rail:
 | `0xf968c66dbb91581a5749f00c77f9854ab92e818c0e1978c33f7c6c269ac6ec44` | fast, called on Circle's messenger directly | 1.9997400 USDC, attested in 29s |
 | `0xceb356b4447601d23f596a9a00a03f0b89a3561d0842fe79bf29568eea4d681b` | `maxFee` deliberately too small | see below |
 
+## All four shapes, on chain
+
+`plan()` decides what a destination needs and returns one of four answers. Two
+of them were exercised in the first session; the other two are the ones the
+fee argument actually rests on, so they were run properly rather than left as
+assertions.
+
+| plan | destination | burn | arrived | our XLM |
+|---|---|---|---|---|
+| `activation` | no account at all | `0xaf406107764bab3b9e7d12142a1b67eefd9a24898f549ff404ff059cc9b00ec8` | 1.4773080 USDC + 3 XLM | 3 XLM |
+| `topup` | exists, holds 1.2 XLM | `0x0e528120dfcc83cbbc9f1cd205b16387ed8b1301cc6fd04fe9176543fa4cb471` | 1.4773080 USDC, XLM 1.2 → 4.2 | 3 XLM |
+| `trustline` | exists, can pay its own way | `0xd3a5d84b6e2c5bbedd878067b2083a65e3c5dd998eb40f1c94faf0d135f613f1` | 1.4923060 USDC, XLM unchanged | none |
+| `none` | already able to receive | `0x6e7eaa284bd36051b77ef5e16a6e4997390a6cec7695f529af08544118a73f84` | 1.4923060 USDC | none |
+
+The `topup` row is the one the README argues for at length: an account that
+exists but cannot afford its own trustline reserve is in the same position as
+one that does not exist, so it gets the same three XLM and pays the same fee.
+The only difference is the operation — a `payment` where the other gets a
+`createAccount`. Seventeen seconds from burn to delivery.
+
+The `trustline` row is the other half of that argument. That user's XLM
+balance is untouched: they paid their own half-XLM reserve, we paid a
+transaction fee, and they were charged no activation because they never owed
+one.
+
+## Being late costs nothing, checked rather than claimed
+
+The delivery ends in a token transfer that fails if the recipient has no USDC
+trustline. The claim has always been that this is survivable — the CCTP
+message is not consumed, so the same one can be presented again. Run against
+`0x2aa6bbc94909baf6e60e2b154c6d2174276da533c5b3c75db8f374d9d6ce1390`:
+
+| | |
+|---|---|
+| First attempt, no trustline | refused at simulation, `retryable`, naming the trustline |
+| Trustline added | — |
+| Same message, second attempt | delivered 1.1938450 USDC |
+
+Nothing was lost and nothing had to be re-burned.
+
 ## Three things this settled
 
 **Stellar takes fast transfers.** The claim that it does not is what this

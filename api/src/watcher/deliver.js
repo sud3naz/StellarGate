@@ -64,10 +64,12 @@ function contractErrorCode(text) {
  * will fail identically forever, so retrying is just a slower way of not
  * telling anyone — it needs a person, and says so.
  *
- * @dev The error a missing trustline produces is still unobserved: every
- * testnet delivery had one in place first. It would come from the token
- * contract rather than from either enum here, so it lands in the retry
- * default — the right place, but by fallback rather than by knowledge.
+ * @dev A missing trustline was the one worth checking rather than assuming,
+ * and it behaves as the design claims. Delivering into a funded account with
+ * no USDC line failed at simulation with a message naming the trustline —
+ * matched below, and from the token contract rather than either enum here.
+ * Adding the line and presenting the *same* message again delivered in full:
+ * a failure consumes nothing, so being late really does cost nothing.
  */
 export function classifyFailure(error) {
   const text = String(error?.message ?? error ?? '');

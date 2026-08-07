@@ -9,12 +9,18 @@
  */
 
 import { strkeyKind, underlyingAccount } from './strkey.js';
+import { encodeApprove, encodeBridge } from './abi.js';
 
 const CONFIG = {
   network: 'testnet',
 
   // Filled in after deployment. Empty on purpose until then.
-  bridge: '',
+  bridge: '0x69752D7C3d1c7C919bc24e34cD440762F642FF00',
+
+  // Where the watcher listens. It builds the setup, because the channel's
+  // sequence number and the funder's address are not the browser's business,
+  // and it takes the signed one back afterwards.
+  api: 'http://localhost:8787',
 
   base: {
     chainIdHex: '0x14a34', // Base Sepolia
@@ -31,7 +37,7 @@ const CONFIG = {
   // they are read back from the contract once one is deployed.
   feeBps: 50n,
   bpsDenom: 10_000n,
-  activationFee: 5_000_000n, // 5 USDC, six decimals
+  activationFee: 3_000_000n, // 3 USDC, six decimals
   minAmount: 1_000_000n,
 };
 
@@ -301,3 +307,119 @@ el.max.addEventListener('click', () => {
 el.net.textContent = CONFIG.network;
 setStatus('idle');
 render();
+
+// --------------------------------------------------------------------------
+// Making the transfer
+//
+// The order is the design, and it is the same order `flow.js` enforces on the
+// far side. The signature comes first because afterwards the user may be
+// gone; the burn comes second because it is the point of no return; the post
+// comes third because until the watcher holds the signed setup it cannot
+// finish the job.
+//
+// What the watcher hands back to be signed is deliberately incomplete — it
+// carries the channel's signature and not the funder's. So a user who signs
+// and never burns is holding a transaction that cannot create anything.
+// --------------------------------------------------------------------------
+
+async function api(path, body) {
+  const response = await fetch(`${CONFIG.api}${path}`, {
+    method: body ? 'POST' : 'GET',
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: response.status, body: await response.json().catch(() => ({})) };
+}
+
+async function sendEvm(to, data) {
+  return window.ethereum.request({
+    method: 'eth_sendTransaction',
+    params: [{ from: state.evm, to, data }],
+  });
+}
+
+async function waitForReceipt(hash) {
+  for (let i = 0; i < 60; i += 1) {
+    const receipt = await window.ethereum.request({
+      method: 'eth_getTransactionReceipt',
+      params: [hash],
+    });
+    if (receipt) return receipt;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error('the transaction did not confirm');
+}
+
+async function bridge() {
+  const amount = parseUsdc(el.amount.value);
+  const recipient = el.dest.value.trim();
+  const activate = state.inspection?.needs !== 'nothing';
+
+  el.go.disabled = true;
+  try {
+    // 1. The setup, and the user's signature on it. Nothing has been spent at
+    //    this point, by them or by us.
+    let setupXdr = null;
+    if (activate) {
+      setStatus('working', 'Preparing the Stellar setup…');
+      const built = await api('/setup', { recipient });
+      if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the setup');
+
+      if (built.body.xdr) {
+        setStatus('working', 'Sign the setup in Freighter…');
+        const signed = await window.freighterApi.signTransaction(built.body.xdr, {
+          networkPassphrase: 'Test SDF Network ; September 2015',
+          address: state.stellar,
+        });
+        setupXdr = typeof signed === 'string' ? signed : signed.signedTxXdr;
+      }
+    }
+
+    // 2. Approve, then burn. Committed from here.
+    setStatus('working', 'Approving USDC…');
+    const approve = encodeApprove(CONFIG.bridge, amount);
+    await waitForReceipt(await sendEvm(CONFIG.base.usdc, approve));
+
+    setStatus('working', 'Burning on Base…');
+    const txHash = await sendEvm(
+      CONFIG.bridge,
+      encodeBridge(amount, recipient, activate, CONFIG.activationFee),
+    );
+    await waitForReceipt(txHash);
+
+    // 3. Hand it over. The watcher re-reads the burn itself before it spends
+    //    anything, so this is a shortcut and not a source of truth — the log
+    //    would find it anyway, just without the signature.
+    setStatus('working', 'Telling the bridge…');
+    for (let i = 0; i < 10; i += 1) {
+      const posted = await api('/transfers', { txHash, recipient, setupXdr });
+      if (posted.status === 200) break;
+      if (posted.status !== 202) throw new Error(posted.body.error || 'the bridge refused it');
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    setStatus('done', 'Burned. Watching for delivery…');
+    watchDelivery(txHash);
+  } catch (error) {
+    setStatus('idle');
+    el.statusText.textContent = String(error?.message ?? error);
+    el.go.disabled = false;
+  }
+}
+
+async function watchDelivery(txHash) {
+  for (let i = 0; i < 120; i += 1) {
+    const { status, body } = await api(`/transfers/${txHash}`);
+    if (status === 200 && body.delivered) {
+      setStatus(
+        'done',
+        `Delivered. <a href="${CONFIG.stellar.explorer}/tx/${body.deliveredAt.stellarTxHash}" target="_blank" rel="noopener">See it on Stellar</a>`,
+      );
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  setStatus('done', 'Still waiting on Circle. It will arrive; this page need not stay open.');
+}
+
+el.go.addEventListener('click', bridge);

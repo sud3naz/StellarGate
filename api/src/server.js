@@ -27,10 +27,39 @@ const json = (status, body) => ({ status, body });
  * @param verifyBurn `(txHash, recipient) => proof | null`, from
  *        {verifyPaidBurn} with the RPC and bridge address bound.
  */
-export function createHandler({ store, verifyBurn }) {
+export function createHandler({ store, verifyBurn, buildSetup = null }) {
   return async function handle({ method, path, body }) {
     if (method === 'GET' && path === '/health') {
       return json(200, { ok: true, pending: store.pending().length });
+    }
+
+    /**
+     * Builds the setup the user is about to sign.
+     *
+     * It has to be built here: the browser cannot know the channel account's
+     * sequence number, and should not know the funder's address. What comes
+     * back is signed by the channel and **not** by the funder — the funder
+     * signs on the far side of the burn, in {submit}, which is what stops
+     * this endpoint from handing out three XLM to anyone who asks for it.
+     *
+     * Nothing is recorded here. A user who asks and walks away has cost us a
+     * Horizon read.
+     */
+    if (method === 'POST' && path === '/setup') {
+      if (!buildSetup) return json(501, { error: 'this watcher does not build setups' });
+
+      const { recipient, amount = null } = body ?? {};
+      if (!recipient) return json(400, { error: 'recipient is required' });
+
+      try {
+        const built = await buildSetup(recipient, { amount });
+        if (!built) {
+          return json(200, { needed: 'nothing', xdr: null });
+        }
+        return json(200, { needed: built.needed, xdr: built.xdr, fundsUser: built.fundsUser });
+      } catch (error) {
+        return json(400, { error: String(error?.message ?? error) });
+      }
     }
 
     if (method === 'POST' && path === '/transfers') {
