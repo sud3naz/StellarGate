@@ -153,10 +153,13 @@ export async function claimOnEvm({
  * The mirror of {step}, and missing its middle: there is no provisioning here,
  * so it is only ever wait-for-Circle then claim.
  */
-export async function reverseStep(transfer, { store, attest, claim }) {
+export async function reverseStep(transfer, { store, attestOut, claim }) {
   if (transfer.deliveredAt) return { action: 'done', reason: 'already claimed' };
 
-  const attestation = await attest(transfer.txHash);
+  // Deliberately not the same `attest` the inbound step uses. Circle files
+  // these under Stellar's domain, and asking the wrong one returns nothing
+  // for a burn that is sitting there attested.
+  const attestation = await attestOut(transfer.txHash);
   if (!attestation?.ready) {
     return {
       action: 'wait',

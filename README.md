@@ -213,6 +213,7 @@ api/src/watcher/store.js      one burn buys one activation, across restarts
 api/src/watcher/attestation.js  asking Circle, and reading a delay correctly
 api/src/watcher/deliver.js    mint_and_forward, and what a refusal means
 api/src/watcher/logs.js       following Bridged, behind the tip
+api/src/watcher/reverse.js    the way out: Stellar's burns, claimed on Base
 api/src/watcher/run.js        the daemon, which holds no rules of its own
 api/src/server.js             the one thing only the browser has: the signature
 api/src/main.js               wiring, and the only file that reads the env
@@ -232,10 +233,10 @@ script/Deploy.s.sol           deployment, which guesses at nothing
 ```bash
 cargo test          # 14, the Soroban side
 forge test          # 47
-cd api && npm test  # 153, the browser included
+cd api && npm test  # 167, the browser included
 ```
 
-214 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+228 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
@@ -293,6 +294,16 @@ is not gated behind a fee that user never owed.
 
 ## What is not here yet
 
+- Gas on the far side of the outbound direction. A user bridging out of
+  Stellar arrives on Base holding USDC and nothing to move it with, which is
+  the same wall this project exists to knock down wearing different clothes.
+  It is not knocked down: the decision was to deliver the USDC and stop there,
+  so the outbound fee buys an interface rather than a far side that works.
+  Claiming is still done for them, because `receiveMessage` is permissionless
+  but somebody has to call it — leaving that to a user with no ETH would mean
+  not arriving at all rather than arriving without gas money.
+- A direction control in the interface. Both directions work and only one of
+  them is drawn.
 - Concurrency. A channel account exists so that two transfers in flight
   cannot invalidate each other's sequence number, and every run so far has
   been one at a time — so the reason the channel exists is the one thing it

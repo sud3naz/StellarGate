@@ -87,7 +87,7 @@ function harness(overrides = {}) {
     calls,
     deps: {
       store,
-      attest: async () => READY,
+      attestOut: async () => READY,
       claim: async (message, attestation) => {
         calls.push({ message, attestation });
         return { ok: true, hash: '0xclaimed' };
@@ -96,6 +96,20 @@ function harness(overrides = {}) {
     },
   };
 }
+
+/// Circle files outbound burns under Stellar's domain, so the inbound
+/// attestation function would return nothing for one sitting there attested.
+test('the outbound attestation is asked for separately', async () => {
+  const { store, deps } = harness();
+  let askedInbound = false;
+  deps.attest = async () => {
+    askedInbound = true;
+    return READY;
+  };
+
+  await reverseStep(store.remember({ txHash: TX, recipient: RECIPIENT }), deps);
+  assert.equal(askedInbound, false, 'the inbound one is for domain 6');
+});
 
 test('an attested burn is claimed on the EVM side', async () => {
   const { store, deps, calls } = harness();
@@ -119,7 +133,7 @@ test('the message is prefixed on the way out', async () => {
 });
 
 test('nothing is claimed before Circle has attested', async () => {
-  const { store, deps, calls } = harness({ attest: async () => ({ ready: false }) });
+  const { store, deps, calls } = harness({ attestOut: async () => ({ ready: false }) });
 
   const result = await reverseStep(store.remember({ txHash: TX, recipient: RECIPIENT }), deps);
 

@@ -17,6 +17,7 @@ import { IRIS, fetchAttestation } from './watcher/attestation.js';
 import { deliver, FORWARDER } from './watcher/deliver.js';
 import { submit } from './stellar/activation.js';
 import { buildSetupFor } from './stellar/setup.js';
+import { claimOnEvm, MESSAGE_TRANSMITTER, STELLAR_DOMAIN } from './watcher/reverse.js';
 import { run } from './watcher/run.js';
 
 function required(env, name) {
@@ -89,10 +90,42 @@ export function assemble(env = process.env) {
       attestation,
     });
 
+  // The other direction runs only where it is configured. A deployment with
+  // no Soroban contract and no EVM key simply does not follow it, rather than
+  // following it badly.
+  const reverseContract = env.BRIDGE_REVERSE_CONTRACT || null;
+  const evmKey = env.BRIDGE_CLAIM_PRIVATE_KEY || null;
+
+  const reverse =
+    reverseContract && evmKey
+      ? {
+          rpcUrl: env.BRIDGE_SOROBAN_RPC || 'https://soroban-testnet.stellar.org',
+          contractId: reverseContract,
+          startLedger: env.BRIDGE_REVERSE_LEDGER ? Number(env.BRIDGE_REVERSE_LEDGER) : null,
+        }
+      : null;
+
+  // Circle attests the outbound burns under Stellar's domain, not ours.
+  const attestOut = (txHash) =>
+    fetchAttestation(isTestnet ? IRIS.testnet : IRIS.public, STELLAR_DOMAIN, txHash);
+
+  const claim = (message, attestation) =>
+    claimOnEvm({
+      rpcUrl: rpc,
+      privateKey: evmKey,
+      transmitter: isTestnet ? MESSAGE_TRANSMITTER.testnet : MESSAGE_TRANSMITTER.public,
+      message,
+      attestation,
+      testnet: isTestnet,
+    });
+
   return {
     store,
     rpc,
     bridge,
+    reverse,
+    attestOut,
+    claim,
     verifyBurn,
     attest,
     submitSetup,

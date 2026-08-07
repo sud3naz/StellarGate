@@ -14,6 +14,7 @@
  */
 
 import { followBridged, latestBlock } from './logs.js';
+import { fetchStellarBurns } from './reverse.js';
 import { sweep } from './index.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -33,12 +34,17 @@ export async function run({
   log = () => {},
   signal,
   fetchImpl = fetch,
+  // The other direction, if this deployment runs it. Its cursor is Soroban's
+  // own and opaque, so it is carried rather than computed.
+  reverse = null,
   ...stepDeps
 }) {
   let at = cursor ?? (await latestBlock(rpc, { fetchImpl }));
   log({ event: 'started', cursor: at, bridge });
 
   let lastFollow = 0;
+  let lastReverse = 0;
+  let reverseCursor = reverse?.cursor ?? null;
 
   while (!signal?.aborted) {
     const now = Date.now();
@@ -66,6 +72,32 @@ export async function run({
       }
     }
 
+    if (reverse && now - lastReverse >= followSeconds * 1000) {
+      lastReverse = now;
+      try {
+        const found = await fetchStellarBurns(reverse.rpcUrl, {
+          contractId: reverse.contractId,
+          cursor: reverseCursor,
+          startLedger: reverseCursor ? null : reverse.startLedger,
+          fetchImpl,
+        });
+        for (const burn of found.burns) {
+          // The recipient is inside the event rather than beside it, and
+          // nothing downstream needs it: going out there is no account to
+          // build and no address of ours to check it against.
+          store.remember({
+            txHash: burn.txHash,
+            recipient: reverse.contractId,
+            direction: 'out',
+          });
+          log({ event: 'burn-out', txHash: burn.txHash, ledger: burn.ledger });
+        }
+        reverseCursor = found.cursor;
+      } catch (error) {
+        log({ event: 'follow-out-failed', reason: String(error?.message ?? error) });
+      }
+    }
+
     try {
       const results = await sweep({ store, ...stepDeps });
       for (const result of results) {
@@ -78,6 +110,6 @@ export async function run({
     await sleep(sweepSeconds * 1000);
   }
 
-  log({ event: 'stopped', cursor: at });
-  return { cursor: at };
+  log({ event: 'stopped', cursor: at, reverseCursor });
+  return { cursor: at, reverseCursor };
 }

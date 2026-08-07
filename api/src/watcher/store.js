@@ -53,7 +53,7 @@ export class Store {
    * logs get re-read after a restart — and must not disturb what is already
    * known about it.
    */
-  remember({ txHash, recipient, setupXdr = null }) {
+  remember({ txHash, recipient, setupXdr = null, direction = 'in' }) {
     if (!txHash || !recipient) throw new Error('a transfer needs a burn and a recipient');
 
     const existing = this.transfers.get(txHash);
@@ -75,6 +75,9 @@ export class Store {
     const transfer = {
       txHash,
       recipient,
+      // Which way it is going. `in` is Base to Stellar and needs an account
+      // built for it; `out` is the reverse and needs nothing but the claim.
+      direction,
       setupXdr,
       activationClaimed: false,
       provisioned: false,

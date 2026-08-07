@@ -22,6 +22,7 @@
  */
 
 import { STATES } from '../flow.js';
+import { reverseStep } from './reverse.js';
 
 /**
  * Moves one transfer as far as it can go right now.
@@ -122,7 +123,13 @@ export async function sweep(deps) {
 
   for (const transfer of store.pending()) {
     try {
-      const result = await step(transfer, deps);
+      // The two directions share a queue and almost nothing else. Going out
+      // there is no burn of ours to verify and no account to build, so it
+      // would be misleading to run it through the same steps.
+      const result =
+        transfer.direction === 'out'
+          ? await reverseStep(transfer, deps)
+          : await step(transfer, deps);
       results.push({ txHash: transfer.txHash, ...result });
       onResult({ txHash: transfer.txHash, ...result });
     } catch (error) {
