@@ -187,6 +187,10 @@ api/src/watcher/burn.js       proof that a burn happened and paid for this
 api/src/watcher/store.js      one burn buys one activation, across restarts
 api/src/watcher/attestation.js  asking Circle, and reading a delay correctly
 api/src/watcher/deliver.js    mint_and_forward, and what a refusal means
+api/src/watcher/logs.js       following Bridged, behind the tip
+api/src/watcher/run.js        the daemon, which holds no rules of its own
+api/src/server.js             the one thing only the browser has: the signature
+api/src/main.js               wiring, and the only file that reads the env
 api/src/config.js             networks, issuers, Circle's contracts
 
 web/index.html                the bridge, drawn as a bridge
@@ -196,10 +200,10 @@ web/strkey.js                 the browser copy of the address check
 
 ```bash
 forge test          # 47
-cd api && npm test  # 106, the browser included
+cd api && npm test  # 127, the browser included
 ```
 
-153 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+174 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
@@ -257,13 +261,11 @@ is not gated behind a fee that user never owed.
 
 ## What is not here yet
 
-- The two ends of the watcher, which is otherwise written. `step()` moves a
-  transfer from a burn to a delivery and is tested against every branch that
-  spends money; what it still has to be wired to is a follower for Base's
-  `Bridged` logs at one end, and an endpoint that takes the signed setup from
-  the browser at the other. Neither is hard. Both are plumbing.
-- A run loop with a timer. `sweep()` does one pass; nothing schedules it yet.
 - Deployment scripts. Deliberately — nothing gets deployed without being asked.
+- The frontend does not talk to the watcher yet. It knows how to take the
+  signature and make the burn; handing the signed setup to `POST /transfers`
+  is the last wire, and until it is joined an activation has to be posted by
+  hand.
 - Coverage for the two shapes `plan()` returns that testnet never exercised:
   `trustline`, and the `topup` that carries the argument this whole thing
   rests on. Also the `op_no_trust` retry, muxed `M…` addresses, and anything
@@ -299,3 +301,24 @@ is not gated behind a fee that user never owed.
   recovered on the source side. Nothing found documents a return path to the
   source chain. Worth settling before the watcher's retry policy is written
   around it.
+
+## Running the watcher
+
+```bash
+cd api
+BRIDGE_CONTRACT=0x69752D7C3d1c7C919bc24e34cD440762F642FF00 \
+BRIDGE_DELIVERY_SECRET=S… \
+npm run watcher
+```
+
+`BRIDGE_DELIVERY_SECRET` is the account that pays for `mint_and_forward` —
+about 0.0075 XLM a call, and it never holds user funds. Everything else has a
+testnet default: source RPC, Soroban RPC, Circle's API, the store's path, and
+the port. `BRIDGE_CURSOR` starts the log follower at a given block; without it
+the watcher begins at the tip and does not go looking for history.
+
+It writes one JSON line per event, so a collector can filter rather than parse
+prose. The two loops run at different speeds on purpose: following logs is one
+cheap call and being late by a few seconds only delays that user, while
+sweeping the queue is what turns an attested transfer into USDC, and a fast
+transfer attests in under thirty.

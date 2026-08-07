@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Stellar side of the EVM to Stellar rail: account inspection and sponsored setup",
+  "description": "Stellar side of the EVM to Stellar rail: account setup, and the watcher that delivers",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "watcher": "node src/main.js"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^16.2.0"
