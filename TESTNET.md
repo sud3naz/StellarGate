@@ -1,7 +1,7 @@
 # Testnet
 
-Base Sepolia to Stellar testnet, 7 August 2026. Every address and hash below
-is checkable. Nothing here touches mainnet.
+Base Sepolia and Stellar testnet, both directions, 7 August 2026. Every address
+and hash below is checkable. Nothing here touches mainnet.
 
 ## Deployed
 
@@ -131,3 +131,47 @@ read the burn receipt itself rather than be told about it — and it is the
 first thing the watcher has to get right.
 
 Cost: three XLM of testnet money. Worth more than that as a finding.
+
+## The other direction
+
+Stellar to Base, proven the same way. `ReverseBridge` is a Soroban contract
+and a much smaller thing than its Solidity counterpart, because going this way
+there is nothing to build on the far side: an EVM address exists whether
+anyone has heard of it or not.
+
+| | |
+|---|---|
+| `ReverseBridge` | [`CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR`](https://stellar.expert/explorer/testnet/contract/CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR) |
+| USDC (SAC, testnet) | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+| TokenMessengerMinter | `CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP` |
+
+A first deployment, `CCYDQQ3R47IT2U4RO5ZRJKETUFYOR6IYMC5TEQLCTSMVHCNHZ7R77JTL`,
+never completed a transfer. It is superseded, and why is below.
+
+| | |
+|---|---|
+| Burn on Stellar | `cf745fd80751449d3f81fa91930dfb2f6f828e504d4d6dd06c7321c576dc8737` |
+| Claim on Base | `0x61d4521167c5542ea5b28a0b26242945d14874be97ba5afee47dbc2d5daa097f` |
+| Sent | 2 USDC |
+| Arrived | 1.99 USDC, about a minute later |
+
+Circle attested at hard finality despite being asked for soft, and it made no
+difference: Stellar's own finality is seconds. The twenty-five minutes going
+the other way were Base's, waiting on an L2 to settle against L1. This
+direction has no such wait to buy off, which is the second thing the fast tier
+turns out not to be needed for.
+
+### The bug the tests could not see
+
+The first deployment failed on chain with `Error(Contract, #9)`, out of a
+`transfer_from` nobody had written. Circle's messenger takes the tokens by
+pulling them — approve first, then `transfer_from`, the same shape as the EVM
+side — and the contract had instead authorised a `transfer` sub-invocation,
+which is the other way tokens move and not the one being used.
+
+The mock in the tests pulled the same wrong way. So all fourteen passed, and
+proved only that the contract agreed with a fiction. What settled it was
+running against the real messenger, which is the whole argument for doing so:
+a test double is a claim about somebody else's code, and claims want checking.
+The mock now uses `transfer_from`, and would fail if the contract went back to
+authorising a call.

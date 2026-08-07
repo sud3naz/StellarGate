@@ -21,9 +21,8 @@
 //! address left-padded into thirty-two bytes and there is no hook at all.
 
 use soroban_sdk::{
-    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    contract, contracterror, contractevent, contractimpl, contracttype, token, vec, Address,
-    BytesN, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    Env, IntoVal, Symbol,
 };
 
 /// Half a percent, as on the source side, and fixed for the same reason: a
@@ -177,26 +176,22 @@ impl ReverseBridge {
         let accrued: i128 = env.storage().instance().get(&Key::Accrued).unwrap_or(0);
         env.storage().instance().set(&Key::Accrued, &(accrued + fee));
 
-        // Circle's messenger moves the net out of this contract, so this
-        // contract has to say so. A contract's own balance is not open to
-        // whoever it happens to be calling.
-        let approval: Vec<InvokerContractAuthEntry> = vec![
-            &env,
-            InvokerContractAuthEntry::Contract(SubContractInvocation {
-                context: ContractContext {
-                    contract: cfg.usdc.clone(),
-                    fn_name: Symbol::new(&env, "transfer"),
-                    args: (
-                        env.current_contract_address(),
-                        cfg.messenger.clone(),
-                        net,
-                    )
-                        .into_val(&env),
-                },
-                sub_invocations: vec![&env],
-            }),
-        ];
-        env.authorize_as_current_contract(approval);
+        // Circle's messenger takes the tokens with `transfer_from`, not
+        // `transfer` — the same approve-then-pull shape as the EVM side — so
+        // what it needs is an allowance rather than permission to be called.
+        // Authorising a `transfer` sub-invocation instead looks correct, runs
+        // correctly against a mock that pulls the other way, and fails on
+        // chain.
+        //
+        // The allowance is exactly the net and expires on the next ledger:
+        // it is consumed inside this transaction, and an allowance that
+        // outlives its purpose is a standing claim on this contract's balance.
+        usdc.approve(
+            &env.current_contract_address(),
+            &cfg.messenger,
+            &net,
+            &(env.ledger().sequence() + 1),
+        );
 
         let circle_allowance = net * cfg.circle_fee_bps / BPS_DENOM;
 

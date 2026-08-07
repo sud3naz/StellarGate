@@ -224,15 +224,18 @@ web/abi.js                    the two calls, encoded by hand and checked
 web/envelope.js               reads a setup before Freighter is asked to sign it
 web/strkey.js                 the browser copy of the address check
 
+contracts/bridge/src/lib.rs   the other direction: Stellar to Base, in Rust
+
 script/Deploy.s.sol           deployment, which guesses at nothing
 ```
 
 ```bash
+cargo test          # 14, the Soroban side
 forge test          # 47
 cd api && npm test  # 153, the browser included
 ```
 
-200 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+214 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real

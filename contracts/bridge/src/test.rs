@@ -46,9 +46,13 @@ mod messenger {
             max_fee: i128,
             min_finality_threshold: u32,
         ) {
-            // The real one moves the tokens out of the caller. If our contract
-            // has not authorised that, this is where it fails.
-            token::TokenClient::new(&env, &burn_token).transfer(
+            // The real one pulls with `transfer_from`, which is what makes an
+            // allowance necessary rather than an authorised call. The first
+            // version of this mock used `transfer`, every test passed, and the
+            // contract failed on chain — so the mock's fidelity here is the
+            // whole point of it.
+            token::TokenClient::new(&env, &burn_token).transfer_from(
+                &env.current_contract_address(),
                 &caller,
                 &env.current_contract_address(),
                 &amount,
