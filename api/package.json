@@ -9,6 +9,7 @@
     "watcher": "node src/main.js"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^16.2.0"
+    "@stellar/stellar-sdk": "^16.2.0",
+    "viem": "^2.55.11"
   }
 }
