@@ -183,6 +183,8 @@ api/src/flow.js               the ordering, as rules rather than as prose
 api/src/stellar/account.js    what a destination is missing, and what it costs
 api/src/stellar/activation.js buying an account, or just the trustline
 api/src/watcher/burn.js       proof that a burn happened and paid for this
+api/src/watcher/store.js      one burn buys one activation, across restarts
+api/src/watcher/attestation.js  asking Circle, and reading a delay correctly
 api/src/config.js             networks, issuers, Circle's contracts
 
 web/index.html                the bridge, drawn as a bridge
@@ -192,10 +194,10 @@ web/strkey.js                 the browser copy of the address check
 
 ```bash
 forge test          # 47
-cd api && npm test  # 66, the browser included
+cd api && npm test  # 86, the browser included
 ```
 
-113 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+133 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
