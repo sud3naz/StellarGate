@@ -10,6 +10,7 @@
 
 import { strkeyKind, underlyingAccount } from './strkey.js';
 import { encodeApprove, encodeBridge } from './abi.js';
+import { parseEnvelope, assertOnlyAskingForTrustline } from './envelope.js';
 
 const CONFIG = {
   network: 'testnet',
@@ -377,6 +378,17 @@ async function bridge() {
       if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the setup');
 
       if (built.body.xdr) {
+        // Read it before handing it over. The setup is built on the server —
+        // a page cannot know the channel's sequence number — so this is the
+        // check that a tampered watcher cannot ask for a payment and have it
+        // signed. Freighter would show it; this refuses before Freighter is
+        // even asked.
+        assertOnlyAskingForTrustline(parseEnvelope(built.body.xdr), {
+          user: recipient,
+          assetCode: 'USDC',
+          issuer: CONFIG.stellar.usdcIssuer,
+        });
+
         setStatus('working', 'Sign the setup in Freighter…');
         const signed = await window.freighterApi.signTransaction(built.body.xdr, {
           networkPassphrase: 'Test SDF Network ; September 2015',

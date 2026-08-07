@@ -86,6 +86,20 @@ channel signs, because it owns the sequence, and the funder signs on the far
 side of the burn in `submit()`. What waits in the browser is real, theirs, and
 short exactly the signature that makes `createAccount` work.
 
+The user still signs something they did not build, though, and that is worth
+one more thing. `web/envelope.js` decodes the setup before Freighter is asked
+for anything, and refuses it unless every operation drawn on the user's own
+account is a trustline for the USDC we named. A payment, a `setOptions` that
+hands the account over, a trustline for somebody else's USDC — all refused
+with an explanation, before a wallet is opened. It fails closed: an operation
+type it does not recognise is a refusal, not a shrug.
+
+The point is that the watcher and this page are not the same thing. One runs
+on a server, the other is served from a CDN, and a watcher that has been
+tampered with should not be able to ask a wallet for whatever it likes. If
+this file is itself replaced then nothing here helps, and that threat belongs
+to Freighter and to whoever reads what it shows them.
+
 Funding only after a paid burn closes the obvious attack. The activation XLM is
 **spent, not lent** — unrecoverable — so an endpoint that creates accounts on
 request costs three XLM per browser tab to drain. `flow.js` gates it twice: on
@@ -207,6 +221,7 @@ api/src/config.js             networks, issuers, Circle's contracts
 web/index.html                the bridge, drawn as a bridge
 web/app.js                    wallets, the destination check, the transfer
 web/abi.js                    the two calls, encoded by hand and checked
+web/envelope.js               reads a setup before Freighter is asked to sign it
 web/strkey.js                 the browser copy of the address check
 
 script/Deploy.s.sol           deployment, which guesses at nothing
@@ -214,10 +229,10 @@ script/Deploy.s.sol           deployment, which guesses at nothing
 
 ```bash
 forge test          # 47
-cd api && npm test  # 140, the browser included
+cd api && npm test  # 153, the browser included
 ```
 
-187 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+200 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
