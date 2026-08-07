@@ -3,7 +3,10 @@
 USDC from the EVM chains into Stellar, arriving in an account that already
 works. Not a cheaper bridge — a front door.
 
-Nothing here is deployed.
+Deployed on Base Sepolia and proven end to end, in forty seconds, into an
+address that did not exist when the transfer started. Addresses and
+transaction hashes are in [TESTNET.md](TESTNET.md). Nothing is deployed on
+mainnet.
 
 ## The problem this exists for
 
@@ -113,21 +116,49 @@ transfer, which reverts if the recipient has no USDC trustline — and the
 message is not consumed, so `mint_and_forward` can simply be retried once the
 trustline exists. Being late costs nothing.
 
-## Stellar is domain 27, and standard only
+## Stellar is domain 27, and it does take fast transfers
 
-Stellar is on CCTP **V2** with domain **27**, and it does **not** support Fast
-Transfer. So the speed is fixed at hard finality: there is no fast tier to
-sell. The attestation window is minutes, not seconds, which is also the window
-the setup is submitted in.
+This document used to say the opposite, and the contract shipped believing it.
+Stellar is widely taken to be standard-only. It is not.
 
-What is *not* fixed is Circle's own fee. `minFee` is a setting on the
-messenger and `_depositForBurn` requires `maxFee` to clear it on **every**
-burn, standard included — it is not a fast-transfer thing. Base's deployed
-messenger predates the setting (`minFee()` and `getMinFeeAmount()` both revert
-there today, checked on-chain), so zero is correct right now. But that
-messenger is a proxy. So the fee is read at call time through a probe that
-treats a missing function as zero, and bounded at 1% of the burn: if Circle
-ever asks for more, the transfer reverts instead of quietly shrinking.
+A burn at `minFinalityThreshold` 1000 was attested in **twenty-nine seconds**
+where hard finality took **twenty-five minutes**, and Stellar's
+`TokenMessengerMinter` accepted the unfinalized message through
+`handle_recv_unfinalized_message` — which the mainnet contract implements too,
+and which Circle's fee API prices at 1.3 basis points on both networks. The
+route sits unused, so it seems nobody had tried it.
+
+Thirteen cents on a thousand dollars, against a wait no exchange withdrawal
+survives. There is no version of this worth running at the slower speed, so
+the choice is not offered: every burn goes out fast.
+
+The wait that fast removes was doing work, though. The account setup used to
+go in during a fifteen-minute attestation, described here as free. It now goes
+in during a twenty-eight second one — measured at thirteen seconds for the
+setup against twenty-eight for the attestation, so **fifteen seconds of
+margin**. Submitting it promptly is not an optimisation any more.
+
+### What Circle takes is an allowance, not a price
+
+The fee is applied at the *destination*: Circle writes `feeExecuted` into the
+burn message, bounded only by the `maxFee` sent from here. Nothing on the
+source chain can be asked what it will be — `getMinFeeAmount` reverts on
+Base's messenger, which predates the setting, and reading a zero from it is
+what would break a fast transfer.
+
+So `maxFee` is granted rather than read: `circleFeeAllowanceBps`, twenty basis
+points, fifteen times what Circle has been observed to take. The asymmetry
+sets the direction. A ceiling too low does not save anyone money — it stalls
+transfers until an owner intervenes — while the cost of one too high is a
+difference Circle has no reason to take, and would have to take visibly, from
+every integrator at once. It is adjustable for the same reason the activation
+fee is, and bounded by `MAX_CIRCLE_FEE_BPS` at 1%, which is not.
+
+Setting it too low is recoverable, which was worth knowing rather than
+assuming. A burn sent with `maxFee` of one unit sat for twenty minutes under
+`delayReason: insufficient_fee`, then attested at hard finality instead —
+`finalityThresholdExecuted` 2000 against the 1000 requested — and delivered in
+full, with no fee at all. A wrong allowance costs speed, not money.
 
 Circle's contracts, from their reference:
 
@@ -159,11 +190,11 @@ web/strkey.js                 the browser copy of the address check
 ```
 
 ```bash
-forge test          # 44
+forge test          # 47
 cd api && npm test  # 49, the browser included
 ```
 
-93 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+96 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
@@ -183,9 +214,23 @@ a retry loop. Both rules are enforced on the way in rather than documented:
   XLM per browser tab to attack.
 
 The transaction source is a **channel account**, not the funder. The setup is
-signed before the burn and submitted up to twenty minutes later; a sequence
-number drawn from a shared wallet would be invalidated by the next transfer in
-that window.
+signed before the burn and submitted after it; a sequence number drawn from a
+shared wallet would be invalidated by the next transfer in that window.
+
+Both rules are enforced in `advance()`, and that turns out not to be enough.
+Driving the flow by hand during the testnet run, the burn was submitted before
+its `approve` had propagated and failed silently — and the setup went in
+anyway, spending three XLM on an activation nobody had paid for. `advance()`
+refuses exactly that transition. It was never called: `submit()` is reachable
+without it.
+
+So the guard has to sit where the money leaves, not beside it. Whoever spends
+must **verify**, not be told: read the receipt from the source chain, find the
+`Bridged` log, check the recipient it names and the `activate` flag it carries,
+and take that as the proof — a value only obtainable by looking. A boolean can
+be wrong about a burn. A receipt cannot. Two smaller things travel with it: the
+burn must name *this* recipient, or one transfer funds another address; and a
+transaction hash must be spendable once, or one payment opens accounts forever.
 
 The gate is on **the XLM leaving**, not on whether an account exists. Creating
 an account and topping up one that cannot afford its trustline both spend three
@@ -216,11 +261,19 @@ is not gated behind a fee that user never owed.
   and was the source of this error". Signing for an address that does not exist
   on the ledger works, which is what the whole no-account path rests on. Still
   worth one smoke test on a real extension, but it is no longer a design risk.
-- **Whether Circle actually relays the forward.** The magic bytes are right —
-  they match `CIRCLE_MAGIC` in Circle's own forwarder tests — but that only
-  proves the forwarder *parses* them. That Circle's service then calls
-  `mint_and_forward` on our behalf is read off a source comment ("set to 0 to
-  opt out of forwarding by Circle"), not off anything observed. If it turns
-  out they do not, we run the call ourselves: it is permissionless, so this is
-  a cost, not a blocker. Worth settling on testnet before it shapes the ops
-  plan.
+- ~~**Whether Circle actually relays the forward.**~~ Settled, and the answer
+  is **no**. Two attested messages were left alone to find out: the standard
+  one for fourteen minutes, the fast one for four. Neither was delivered.
+  `mint_and_forward` is permissionless and costs **0.0075 XLM** — a quarter of
+  a cent — so this is an item on the watcher's list rather than a problem.
+  There is no user-facing button for it either: a choice the user can get
+  wrong is not a feature, and the promise is that USDC arrives ready to spend.
+- **How long a fast attestation stays valid.** Fast burn messages carry an
+  `expirationBlock`; standard ones carry zero. Circle exposes
+  `POST /v2/reattest/{nonce}`, which refreshes it while the burn still exists
+  on the source chain, and past expiry the message reads as standard. What is
+  not established is the window itself, or how that squares with a report of a
+  Base→Arc transfer on mainnet that went undelivered for a week and was then
+  recovered on the source side. Nothing found documents a return path to the
+  source chain. Worth settling before the watcher's retry policy is written
+  around it.

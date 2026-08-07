@@ -21,10 +21,6 @@ interface ITokenMessengerV2 {
         uint32 minFinalityThreshold,
         bytes calldata hookData
     ) external;
-
-    /// @dev Added after the messenger deployed on Base, so it is probed rather
-    /// than called outright. See {StellarBridge-_circleMinFee}.
-    function getMinFeeAmount(uint256 amount) external view returns (uint256);
 }
 
 /**
@@ -54,10 +50,14 @@ interface ITokenMessengerV2 {
  *    not consumed, so `mint_and_forward` can simply be retried once the
  *    trustline is in place. Nothing is lost by being late.
  *
- * Stellar does not support Fast Transfer, so the speed is fixed at standard
- * hard finality. The fee paid to Circle is not fixed, though: `minFee` lives
- * on the messenger and applies to every burn regardless of speed, so it is
- * read at call time and bounded rather than assumed to be zero.
+ * Every burn goes out at soft finality. Stellar is widely taken not to support
+ * Fast Transfer — this contract shipped believing it — and the chain says
+ * otherwise: the same transfer attests in twenty-nine seconds rather than
+ * twenty-five minutes, for 1.3 basis points. There is no version of this rail
+ * worth running at the slower speed, so the choice is not offered. What Circle
+ * may take for it is an allowance rather than a price, because the fee is
+ * applied at the far end and nothing here can ask for it. See
+ * {circleFeeAllowanceBps}.
  *
  * The fee remains avoidable by calling CCTP directly. This charges for the
  * interface and for the account setup on the far side, not for access to the
@@ -90,14 +90,23 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
 
     /// @notice Stellar's CCTP domain.
     uint32 public constant STELLAR_DOMAIN = 27;
-    /// @notice Hard finality. Stellar has no Fast Transfer, so there is no
-    /// other value worth passing.
-    uint32 public constant FINALITY_STANDARD = 2000;
+    /**
+     * @notice Soft finality, which is to say Fast Transfer.
+     *
+     * Stellar does support it. Circle's documentation is read as saying
+     * otherwise and the route sits unused, so this went untested — but the
+     * chain disagrees with the reading. Burning at this threshold on Base
+     * Sepolia was attested in **29 seconds** against **25 minutes** for hard
+     * finality, and Stellar's TokenMessengerMinter took the unfinalized
+     * message through `handle_recv_unfinalized_message`, which mainnet also
+     * implements. The cost is 1.3 basis points where hard finality is free:
+     * thirteen cents on a thousand dollars, against a wait no exchange
+     * withdrawal survives.
+     */
+    uint32 public constant FINALITY_FAST = 1000;
 
-    /// @notice Ceiling on Circle's own minimum fee, 1% of the burn. Circle can
-    /// raise `minFee` on the messenger whenever they like, and that fee comes
-    /// out of what the user receives. Past this the transfer reverts instead
-    /// of quietly shrinking.
+    /// @notice Ceiling on what Circle may be authorised to take, 1% of the
+    /// burn. {circleFeeAllowanceBps} moves below this; this does not move.
     uint256 public constant MAX_CIRCLE_FEE_BPS = 100;
 
     /// @dev Circle's marker telling their own relayer that this hook is a
@@ -129,6 +138,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
     event FeesWithdrawn(address indexed to, uint256 amount);
     event TreasuryUpdated(address indexed treasury);
     event ActivationFeeUpdated(uint256 previous, uint256 current);
+    event CircleFeeAllowanceUpdated(uint256 previous, uint256 current);
 
     IERC20 public immutable usdc;
     ITokenMessengerV2 public immutable messenger;
@@ -164,6 +174,29 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      * transaction already in the mempool.
      */
     uint256 public activationFee = 5e6; // 5 USDC
+
+    /**
+     * @notice What Circle is authorised to take out of a burn, in basis
+     * points of the amount sent.
+     *
+     * Not a price we are quoted — an allowance we grant. On a fast transfer
+     * the fee is applied at the *destination*, written into the message as
+     * `feeExecuted` and bounded only by the `maxFee` sent from here. Circle
+     * fills that number in, so whatever is set here is what they may take.
+     * Observed behaviour is that they take exactly their published minimum
+     * (1.3 bps, to the unit), and taking more would be visible on-chain to
+     * every integrator at once — but it is an allowance, and worth reading as
+     * one.
+     *
+     * Twenty basis points is fifteen times the current fee. The asymmetry is
+     * the reason for the headroom: setting it too low does not save anyone
+     * money, it fails transfers until an owner intervenes, whereas the cost of
+     * setting it high is a difference Circle has no reason to take. Adjustable
+     * for the same reason {activationFee} is — Circle's number can move and a
+     * redeploy is a poor way to find out — and bounded by
+     * {MAX_CIRCLE_FEE_BPS}, which cannot move at all.
+     */
+    uint256 public circleFeeAllowanceBps = 20;
 
     uint256 public accruedFees;
     uint256 public totalFeesCollected;
@@ -219,11 +252,12 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
 
         (net, fee) = quote(amount, activate);
 
-        // Whatever Circle currently demands, bounded. Zero today; the messenger
-        // on Base predates the setting, and it is a proxy.
-        uint256 circleFee = _circleMinFee(net);
-        uint256 ceiling = (net * MAX_CIRCLE_FEE_BPS) / BPS_DENOM;
-        if (circleFee > ceiling) revert CircleFeeTooHigh(circleFee, ceiling);
+        // What Circle may take, not what they have asked for. On a fast
+        // transfer the fee lands at the destination, and the source accepts
+        // any ceiling at all — including one too small to cover it. So this is
+        // granted rather than read, and {circleFeeAllowanceBps} is set with
+        // enough headroom that Circle never runs into it.
+        uint256 circleFee = circleFeeAllowance(net);
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -243,7 +277,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
             // Zero: anyone may trigger the mint, so nobody can hold it hostage.
             bytes32(0),
             circleFee,
-            FINALITY_STANDARD,
+            FINALITY_FAST,
             _hookData(stellarRecipient)
         );
         usdc.forceApprove(address(messenger), 0);
@@ -295,29 +329,32 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
     }
 
     /**
-     * @notice What Circle would currently take out of a burn of `net`, so the
-     * quote box can show it rather than surprise the user with it.
+     * @notice The ceiling authorised to Circle for a burn of `net`.
+     *
+     * @dev Not what they will take — what they may. The fee is applied at the
+     * destination and only becomes a number when Circle writes `feeExecuted`
+     * into the message, so nothing on this chain can be asked. Observed: 1.3
+     * basis points, which is their published minimum, against the twenty this
+     * authorises.
      */
-    function circleMinFee(uint256 net) external view returns (uint256) {
-        return _circleMinFee(net);
+    function circleFeeAllowance(uint256 net) public view returns (uint256) {
+        return (net * circleFeeAllowanceBps) / BPS_DENOM;
     }
 
     /**
-     * @dev Circle's `minFee` is a setting on the messenger, not a property of
-     * the transfer speed: `_depositForBurn` requires `maxFee` to clear it for
-     * every burn, standard included. Passing a hardcoded zero therefore works
-     * only for as long as the setting stays unset — and the messenger on Base
-     * is a proxy, so that is not a promise anyone made.
+     * @notice Repoints what Circle is allowed to take.
+     * @dev Adjustable because Circle's fee can move and a stuck rail is a poor
+     * way to learn that. Bounded by {MAX_CIRCLE_FEE_BPS}, which cannot move.
      *
-     * `getMinFeeAmount` was added after that proxy's current implementation,
-     * so calling it outright would revert today. It is probed instead: a
-     * missing function means a deployment with no minimum, which is zero.
+     * Lowering this is the dangerous direction. A ceiling too small does not
+     * fail at the burn — the source accepts any `maxFee`, including one that
+     * cannot cover the fee — so the money is already committed by the time it
+     * matters.
      */
-    function _circleMinFee(uint256 net) private view returns (uint256) {
-        (bool ok, bytes memory result) =
-            address(messenger).staticcall(abi.encodeCall(ITokenMessengerV2.getMinFeeAmount, (net)));
-        if (!ok || result.length != 32) return 0;
-        return abi.decode(result, (uint256));
+    function setCircleFeeAllowance(uint256 bps) external onlyOwner {
+        if (bps > MAX_CIRCLE_FEE_BPS) revert AboveCeiling(bps, MAX_CIRCLE_FEE_BPS);
+        emit CircleFeeAllowanceUpdated(circleFeeAllowanceBps, bps);
+        circleFeeAllowanceBps = bps;
     }
 
     /// @notice The hook data a given recipient produces, exposed so the

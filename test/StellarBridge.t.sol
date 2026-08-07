@@ -301,8 +301,8 @@ contract StellarBridgeTest is Test {
         assertEq(c.mintRecipient, FORWARDER, "mints to the forwarder, not the user");
         assertEq(c.burnToken, address(usdc));
         assertEq(c.destinationCaller, bytes32(0), "anyone may trigger the mint");
-        assertEq(c.maxFee, 0, "no fast transfer to Stellar, so no relay fee");
-        assertEq(c.minFinalityThreshold, 2000, "hard finality");
+        assertEq(c.maxFee, 1.99e6, "what Circle may take on delivery, not what they asked for");
+        assertEq(c.minFinalityThreshold, 1000, "soft finality: Stellar does take fast transfers");
     }
 
     /// @dev The layout Circle's forwarder parses. If this drifts, the mint
@@ -336,48 +336,72 @@ contract StellarBridgeTest is Test {
         assertEq(bridge.hookDataFor(RECIPIENT), messenger.lastHookData());
     }
 
-    // --- Circle's own fee, which is a setting and not a constant ---------
+    // --- Circle's fee, which is an allowance and not a price ------------
 
-    /// @dev Today's Base messenger has no `getMinFeeAmount`, so the probe must
-    /// read the revert as "no minimum" rather than propagate it.
-    function test_missingMinFeeFunctionReadsAsZero() public {
-        assertEq(bridge.circleMinFee(995e6), 0);
-
-        vm.prank(user);
-        bridge.bridge(1000e6, RECIPIENT, false, 0);
-        assertEq(messenger.recorded().maxFee, 0, "nothing authorised when nothing is demanded");
-    }
-
-    /// @dev Circle upgrades the proxy and switches the fee on. A hardcoded
-    /// zero would revert every transfer from here on; this must keep working.
-    function test_authorisesCircleFeeWhenItAppears() public {
-        messenger.setMinFee(10); // 0.1%
-
-        assertEq(bridge.circleMinFee(995e6), 0.995e6);
+    /// @dev The fee lands at the destination, so there is nothing here to ask.
+    /// What goes out is the ceiling this contract grants: twenty basis points
+    /// of the burn, against the 1.3 Circle has been observed to take.
+    function test_authorisesTheAllowanceNotAProbe() public {
+        assertEq(bridge.circleFeeAllowance(995e6), 1.99e6);
 
         vm.prank(user);
         bridge.bridge(1000e6, RECIPIENT, false, 0);
-        assertEq(messenger.recorded().maxFee, 0.995e6, "exactly what Circle asked for, no more");
+        assertEq(messenger.recorded().maxFee, 1.99e6, "twenty bps of the burn, granted not read");
     }
 
-    /// @dev And if they ask for something absurd, stop rather than let it eat
-    /// the transfer.
-    function test_refusesAnAbsurdCircleFee() public {
-        messenger.setMinFee(150); // 1.5%, past the 1% ceiling
+    /// @dev The messenger on Base has no `getMinFeeAmount`, and it no longer
+    /// matters: nothing consults it. A transfer must go through whether the
+    /// function is there or not.
+    function test_ignoresTheMessengersOwnFeeSetting() public {
+        messenger.setMinFee(10); // Circle switches minFee on; irrelevant here
 
         vm.prank(user);
+        bridge.bridge(1000e6, RECIPIENT, false, 0);
+        assertEq(messenger.recorded().maxFee, 1.99e6, "still the allowance, not their number");
+    }
+
+    /// @dev Circle raises their fee past the current allowance. The answer is
+    /// a setter call, not a redeploy — which is the whole reason this is not a
+    /// constant.
+    function test_allowanceMovesWithoutARedeploy() public {
+        vm.prank(owner);
+        bridge.setCircleFeeAllowance(40);
+
+        vm.prank(user);
+        bridge.bridge(1000e6, RECIPIENT, false, 0);
+        assertEq(messenger.recorded().maxFee, 3.98e6);
+    }
+
+    function test_allowanceCannotPassTheCeiling() public {
+        vm.prank(owner);
         vm.expectRevert(
-            abi.encodeWithSelector(StellarBridge.CircleFeeTooHigh.selector, uint256(14.925e6), uint256(9.95e6))
+            abi.encodeWithSelector(StellarBridge.AboveCeiling.selector, uint256(101), uint256(100))
         );
-        bridge.bridge(1000e6, RECIPIENT, false, 0);
+        bridge.setCircleFeeAllowance(101);
     }
 
-    function test_circleFeeExactlyAtCeilingIsAllowed() public {
-        messenger.setMinFee(100); // 1%, the ceiling itself
+    function test_allowanceAtTheCeilingIsAllowed() public {
+        vm.prank(owner);
+        bridge.setCircleFeeAllowance(100);
+        assertEq(bridge.circleFeeAllowance(995e6), 9.95e6);
+    }
 
+    function test_onlyOwnerMovesTheAllowance() public {
+        vm.prank(user);
+        vm.expectRevert();
+        bridge.setCircleFeeAllowance(30);
+    }
+
+    // --- fast transfer, which Stellar was said not to have ---------------
+
+    /// @dev The claim was that Stellar is standard-only. It is not: a burn at
+    /// threshold 1000 attested in 29 seconds on testnet against 25 minutes at
+    /// 2000, and Stellar took the unfinalized message. Passing 2000 here would
+    /// cost every user that difference for nothing.
+    function test_burnsAtSoftFinality() public {
         vm.prank(user);
         bridge.bridge(1000e6, RECIPIENT, false, 0);
-        assertEq(messenger.recorded().maxFee, 9.95e6);
+        assertEq(messenger.recorded().minFinalityThreshold, 1000, "fast, not hard finality");
     }
 
     // --- the address is checked before the money moves -------------------
