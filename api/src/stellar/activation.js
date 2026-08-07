@@ -1,5 +1,7 @@
 import { Asset, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 
+import { assertPaidForActivation } from '../watcher/burn.js';
+
 /**
  * Making a Stellar address able to hold USDC.
  *
@@ -139,13 +141,54 @@ export function plan(inspection, { reserveStroops }) {
 }
 
 /**
- * Submits an activation that was signed earlier.
+ * Whether a signed setup would spend our own XLM, read off the transaction
+ * rather than off what the caller says about it.
+ *
+ * Creating an account and topping one up both send XLM outright. Adding a
+ * trustline to an account that can pay its own reserve costs a transaction fee
+ * and nothing more, and is deliberately not in this list — gating it would be
+ * charging a user who never owed anything.
+ */
+export function spendsOurXlm(signedXdr, networkPassphrase) {
+  const tx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+  return tx.operations.some(
+    (op) => op.type === 'createAccount' || (op.type === 'payment' && op.asset?.isNative?.()),
+  );
+}
+
+/**
+ * Submits a setup that was signed earlier.
+ *
+ * @param paidBurn A proof from {verifyPaidBurn}, required when the transaction
+ *        sends XLM. Not a flag — a value that can only be got by reading the
+ *        burn receipt off the source chain.
+ *
+ * This is where the gate lives, rather than beside it. `flow.js` already
+ * refuses to provision a transfer that has not paid, and on 7 August that was
+ * not enough: a burn failed silently, `advance()` was never consulted, this
+ * function was called anyway, and three XLM left for an activation nobody had
+ * bought. A rule that can be walked past is a comment.
+ *
+ * `networkPassphrase` is required for the same reason. Making it optional
+ * would mean a caller who omits it skips the check, which is the failure mode
+ * this is meant to close.
  *
  * `op_already_exists` is not a failure: two transfers to the same fresh
  * address can race, and the loser finds the work already done. Retrying that
  * forever would be the actual bug.
  */
-export async function submit(horizon, signedXdr, { fetchImpl = fetch } = {}) {
+export async function submit(
+  horizon,
+  signedXdr,
+  { networkPassphrase, paidBurn = null, fetchImpl = fetch } = {},
+) {
+  if (!networkPassphrase) {
+    throw new Error('submit needs the network passphrase to see what it is submitting');
+  }
+  if (spendsOurXlm(signedXdr, networkPassphrase)) {
+    assertPaidForActivation(paidBurn);
+  }
+
   const response = await fetchImpl(`${horizon}/transactions`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },

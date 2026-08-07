@@ -182,6 +182,7 @@ src/StellarStrkey.sol         base32 + CRC16, so a typo cannot reach Stellar
 api/src/flow.js               the ordering, as rules rather than as prose
 api/src/stellar/account.js    what a destination is missing, and what it costs
 api/src/stellar/activation.js buying an account, or just the trustline
+api/src/watcher/burn.js       proof that a burn happened and paid for this
 api/src/config.js             networks, issuers, Circle's contracts
 
 web/index.html                the bridge, drawn as a bridge
@@ -191,10 +192,10 @@ web/strkey.js                 the browser copy of the address check
 
 ```bash
 forge test          # 47
-cd api && npm test  # 49, the browser included
+cd api && npm test  # 66, the browser included
 ```
 
-96 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+113 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
@@ -232,6 +233,15 @@ be wrong about a burn. A receipt cannot. Two smaller things travel with it: the
 burn must name *this* recipient, or one transfer funds another address; and a
 transaction hash must be spendable once, or one payment opens accounts forever.
 
+That is now `verifyPaidBurn` in `watcher/burn.js`, and `submit()` asks for its
+result rather than for a flag. It also reads the transaction it is about to
+send: an XDR carrying a `createAccount` or a native payment spends our XLM and
+needs the proof, while a trustline on its own does not. The network passphrase
+is a required argument for that reason — submitting without being able to see
+what is being submitted is the hole itself. The address filter is the security
+boundary in all this: `Bridged` is a signature anyone can emit, so a log from
+any contract but ours is somebody else's event.
+
 The gate is on **the XLM leaving**, not on whether an account exists. Creating
 an account and topping up one that cannot afford its trustline both spend three
 XLM, so both need the fee to have been paid. Adding a trustline to an account
@@ -243,10 +253,17 @@ is not gated behind a fee that user never owed.
 
 ## What is not here yet
 
-- The watcher that ties Base's `Bridged` log to `submit-setup`, and the store
-  behind it. The rules it has to obey are in `flow.js` and tested; the plumbing
-  is not written.
+- The watcher itself. Its first job — proving a burn paid for what is about to
+  be spent — is written and tested in `watcher/burn.js`; the loop around it is
+  not. What remains: following `Bridged` logs, polling the attestation,
+  calling `mint_and_forward`, retrying a delivery that arrived before its
+  trustline, and a store that will not let one burn open two accounts.
 - Deployment scripts. Deliberately — nothing gets deployed without being asked.
+- Coverage for the two shapes `plan()` returns that testnet never exercised:
+  `trustline`, and the `topup` that carries the argument this whole thing
+  rests on. Also the `op_no_trust` retry, muxed `M…` addresses, and anything
+  concurrent — a channel account exists for concurrency, and one transfer at a
+  time never tested it.
 
 ## Open decisions
 

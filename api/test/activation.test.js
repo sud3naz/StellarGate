@@ -180,8 +180,17 @@ function response(body, status) {
   return async () => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 }
 
+/// A trustline on its own spends a transaction fee and none of our XLM, so it
+/// needs no proof and makes a clean subject for the response handling.
+const trustlineXdr = () => buildTrustline(args()).toXDR();
+
+/// An activation does send XLM, and is what the gate below is about.
+const activationXdr = () =>
+  buildActivation({ ...args(), funder: funderKey.publicKey(), startingBalance: '3' }).toXDR();
+
 test('losing the race to another transfer is not a failure', async () => {
-  const result = await submit('https://horizon.example', 'AAAA', {
+  const result = await submit('https://horizon.example', trustlineXdr(), {
+    networkPassphrase: passphrase,
     fetchImpl: response(
       {
         extras: {
@@ -196,7 +205,8 @@ test('losing the race to another transfer is not a failure', async () => {
 });
 
 test('an underfunded funder is a real failure and needs a human', async () => {
-  const result = await submit('https://horizon.example', 'AAAA', {
+  const result = await submit('https://horizon.example', trustlineXdr(), {
+    networkPassphrase: passphrase,
     fetchImpl: response(
       { extras: { result_codes: { transaction: 'tx_failed', operations: ['op_underfunded'] } } },
       400,
@@ -206,4 +216,63 @@ test('an underfunded funder is a real failure and needs a human', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.alreadyDone, false);
   assert.deepEqual(result.operationCodes, ['op_underfunded']);
+});
+
+// --- the gate, which used to sit beside the path rather than on it --------
+
+/**
+ * On 7 August a burn was submitted before its approve had propagated and
+ * failed silently. The setup went in regardless, and three XLM left for an
+ * activation nobody had bought. `flow.js` refuses exactly that transition;
+ * nothing obliged anyone to ask it. This is that same call.
+ */
+test('refuses to send XLM without a verified burn', async () => {
+  let reached = false;
+  await assert.rejects(
+    submit('https://horizon.example', activationXdr(), {
+      networkPassphrase: passphrase,
+      fetchImpl: async () => {
+        reached = true;
+        return { ok: true, json: async () => ({ hash: 'nope' }) };
+      },
+    }),
+  );
+  assert.equal(reached, false, 'it has to fail before Horizon is ever asked');
+});
+
+test('a burn that bought no activation is not a proof', async () => {
+  await assert.rejects(
+    submit('https://horizon.example', activationXdr(), {
+      networkPassphrase: passphrase,
+      paidBurn: { txHash: '0xaf40', activate: false },
+      fetchImpl: response({ hash: 'nope' }, 200),
+    }),
+  );
+});
+
+test('a paid activation goes through', async () => {
+  const result = await submit('https://horizon.example', activationXdr(), {
+    networkPassphrase: passphrase,
+    paidBurn: { txHash: '0xaf40', activate: true },
+    fetchImpl: response({ hash: 'abc123' }, 200),
+  });
+  assert.equal(result.ok, true);
+});
+
+/// Not gated, because that user never owed us anything.
+test('a trustline needs no proof', async () => {
+  const result = await submit('https://horizon.example', trustlineXdr(), {
+    networkPassphrase: passphrase,
+    fetchImpl: response({ hash: 'abc123' }, 200),
+  });
+  assert.equal(result.ok, true);
+});
+
+/// Omitting the passphrase would mean submitting without being able to read
+/// what is being submitted, which is the hole this closes.
+test('refuses to submit blind', async () => {
+  await assert.rejects(
+    submit('https://horizon.example', trustlineXdr(), { fetchImpl: response({}, 200) }),
+    /passphrase/,
+  );
 });
