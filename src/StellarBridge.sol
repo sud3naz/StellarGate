@@ -1,0 +1,350 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+import {StellarStrkey} from "./StellarStrkey.sol";
+
+/// @notice The part of Circle's CCTP v2 TokenMessenger this contract calls.
+interface ITokenMessengerV2 {
+    function depositForBurnWithHook(
+        uint256 amount,
+        uint32 destinationDomain,
+        bytes32 mintRecipient,
+        address burnToken,
+        bytes32 destinationCaller,
+        uint256 maxFee,
+        uint32 minFinalityThreshold,
+        bytes calldata hookData
+    ) external;
+
+    /// @dev Added after the messenger deployed on Base, so it is probed rather
+    /// than called outright. See {StellarBridge-_circleMinFee}.
+    function getMinFeeAmount(uint256 amount) external view returns (uint256);
+}
+
+/**
+ * @title StellarBridge
+ * @notice Source side of the EVM to Stellar rail: takes the service fee and
+ * burns the remainder toward Stellar, where it mints into the user's own
+ * account.
+ *
+ * Stellar is CCTP domain 27 and, unlike the EVM chains, it will not take a
+ * plain account as the mint recipient: CCTP treats `mintRecipient` as a
+ * contract address there. Paying an ordinary `G…` account therefore goes
+ * through Circle's own CctpForwarder — the burn mints to the forwarder, and
+ * the forwarder pays the address carried in the hook data. So the recipient
+ * travels as text, not as a 32-byte word, and this contract has to use
+ * `depositForBurnWithHook` rather than the plain call.
+ *
+ * Two consequences worth stating, because both are load-bearing:
+ *
+ * 1. The address is checked here, in full, checksum included. A typo that
+ *    still decodes is money gone forever, and Stellar cannot catch it for us.
+ *    See {StellarStrkey}.
+ *
+ * 2. The user's Stellar account must exist and hold a USDC trustline before
+ *    the mint, or the forwarder's final transfer reverts. That setup is the
+ *    backend's job, sponsored so the user never needs XLM, and it is driven by
+ *    the {Bridged} event below. A revert there is recoverable: the message is
+ *    not consumed, so `mint_and_forward` can simply be retried once the
+ *    trustline is in place. Nothing is lost by being late.
+ *
+ * Stellar does not support Fast Transfer, so the speed is fixed at standard
+ * hard finality. The fee paid to Circle is not fixed, though: `minFee` lives
+ * on the messenger and applies to every burn regardless of speed, so it is
+ * read at call time and bounded rather than assumed to be zero.
+ *
+ * The fee remains avoidable by calling CCTP directly. This charges for the
+ * interface and for the account setup on the far side, not for access to the
+ * rail.
+ */
+contract StellarBridge is Ownable2Step, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    /// @notice Service fee, fixed at compile time so it cannot be quietly
+    /// raised. Half a percent, and it is what everyone pays: a flat fee on
+    /// every transfer is what makes a small one absurd, and small transfers
+    /// are the ones this bridge exists to win.
+    uint256 public constant FEE_BPS = 50;
+    uint256 public constant BPS_DENOM = 10_000;
+
+    /**
+     * @notice Hard cap on the activation fee. A constant, so this one really
+     * cannot be raised without a redeploy.
+     *
+     * The fee below it moves because its cost is denominated in XLM while the
+     * fee is denominated in USDC, and those drift apart. This bounds that
+     * drift at four times the starting price. Past it the answer is to send
+     * less XLM — three is generous, and about 1.6 is the functional minimum —
+     * not to charge more.
+     */
+    uint256 public constant ACTIVATION_FEE_CEILING = 20e6; // 20 USDC
+
+    /// @notice Floor on a transfer, purely to keep dust out.
+    uint256 public constant MIN_AMOUNT = 1e6; // 1 USDC, six decimals
+
+    /// @notice Stellar's CCTP domain.
+    uint32 public constant STELLAR_DOMAIN = 27;
+    /// @notice Hard finality. Stellar has no Fast Transfer, so there is no
+    /// other value worth passing.
+    uint32 public constant FINALITY_STANDARD = 2000;
+
+    /// @notice Ceiling on Circle's own minimum fee, 1% of the burn. Circle can
+    /// raise `minFee` on the messenger whenever they like, and that fee comes
+    /// out of what the user receives. Past this the transfer reverts instead
+    /// of quietly shrinking.
+    uint256 public constant MAX_CIRCLE_FEE_BPS = 100;
+
+    /// @dev Circle's marker telling their own relayer that this hook is a
+    /// forward it should execute. Without it the mint still works, but
+    /// somebody has to call `mint_and_forward` themselves.
+    bytes24 private constant HOOK_MAGIC = bytes24("cctp-forward");
+    /// @dev Hook data version the Stellar forwarder expects.
+    uint32 private constant HOOK_VERSION = 0;
+
+    error ZeroAddress();
+    error AmountTooSmall(uint256 amount, uint256 minimum);
+    error ExceedsAccruedFees(uint256 requested, uint256 available);
+    error CircleFeeTooHigh(uint256 required, uint256 ceiling);
+    error AboveCeiling(uint256 requested, uint256 ceiling);
+    error ActivationFeeChanged(uint256 current, uint256 accepted);
+
+    /// @dev `activate` is what the Stellar side acts on: the three XLM go out
+    /// only for a transfer that paid for them, so the funding endpoint cannot
+    /// be drained by anyone who has not.
+    event Bridged(
+        address indexed user,
+        string stellarRecipient,
+        uint256 gross,
+        uint256 net,
+        uint256 fee,
+        uint8 recipientVersion,
+        bool activate
+    );
+    event FeesWithdrawn(address indexed to, uint256 amount);
+    event TreasuryUpdated(address indexed treasury);
+    event ActivationFeeUpdated(uint256 previous, uint256 current);
+
+    IERC20 public immutable usdc;
+    ITokenMessengerV2 public immutable messenger;
+    /// @notice Circle's CctpForwarder on Stellar, as its raw 32-byte contract
+    /// id. Every burn from here mints to it, and it pays the user.
+    bytes32 public immutable forwarder;
+    address public treasury;
+
+    /**
+     * @notice What activating an address costs, when it needs it.
+     *
+     * Charged only when the destination has no Stellar account, and it buys
+     * one outright: three XLM sent to the address, not lent to it.
+     *
+     * Worth being precise about what this does and does not do. The user makes
+     * their own wallet, in Freighter, and holds their own key; nothing here
+     * generates or custodies one. On Stellar a keypair costs nothing and is
+     * created offline — but the address does not exist on the ledger until
+     * somebody funds it, and that is the only thing being bought. Sponsored
+     * reserves were the alternative and would have cost less, since
+     * sponsorship locks capital rather than spending it — but a sponsored
+     * account holds zero XLM, and an account with zero XLM cannot pay a
+     * transaction fee. It could receive USDC and then be unable to send it
+     * anywhere without us signing for every move.
+     *
+     * Everybody else pays nothing for this. Somebody withdrawing from an
+     * exchange already has an account, and charging them for one is how you
+     * lose them.
+     *
+     * Adjustable because the cost is three XLM and the fee is dollars, and
+     * those drift. Bounded by {ACTIVATION_FEE_CEILING}, and every caller
+     * states the price they accepted, so it cannot be moved out from under a
+     * transaction already in the mempool.
+     */
+    uint256 public activationFee = 5e6; // 5 USDC
+
+    uint256 public accruedFees;
+    uint256 public totalFeesCollected;
+    uint256 public totalBridged;
+
+    constructor(address initialOwner, address usdc_, address messenger_, bytes32 forwarder_, address treasury_)
+        Ownable(initialOwner)
+    {
+        if (usdc_ == address(0) || messenger_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
+        if (forwarder_ == bytes32(0)) revert ZeroAddress();
+        usdc = IERC20(usdc_);
+        messenger = ITokenMessengerV2(messenger_);
+        forwarder = forwarder_;
+        treasury = treasury_;
+    }
+
+    /**
+     * @notice Takes the service fee and burns the remainder toward Stellar.
+     * @param amount Gross USDC pulled from the caller; approve it first.
+     * @param stellarRecipient The destination as a strkey: a `G…` account, or
+     *        an `M…` muxed address when the far end needs a memo id, which is
+     *        how an exchange deposit has to be addressed from a contract.
+     * @param activate Whether to buy the destination a Stellar account. Set it
+     *        for an address that does not exist on the ledger yet; the caller
+     *        pays {activationFee} and the Stellar side sends the XLM. Setting
+     *        it for an account that already exists only overpays, and setting
+     *        it falsely for one that does not means the transfer arrives with
+     *        nowhere to land — recoverable, since the delivery can be retried
+     *        once the account exists, but the user has to sort that out.
+     * @param acceptedActivationFee The activation price the caller agreed to,
+     *        as quoted. Ignored when `activate` is false. This is what stops a
+     *        fee change landing on a transaction that is already in flight:
+     *        the quote the user saw is the quote they pay, or nothing happens.
+     * @return net Amount burned toward Stellar.
+     * @return fee Service fee retained here.
+     */
+    function bridge(
+        uint256 amount,
+        string calldata stellarRecipient,
+        bool activate,
+        uint256 acceptedActivationFee
+    ) external nonReentrant returns (uint256 net, uint256 fee) {
+        uint256 activation = activate ? activationFee : 0;
+        if (activate && activation > acceptedActivationFee) {
+            revert ActivationFeeChanged(activation, acceptedActivationFee);
+        }
+
+        uint256 floor = MIN_AMOUNT + activation;
+        if (amount < floor) revert AmountTooSmall(amount, floor);
+
+        // Reverts on a bad address, before any money moves.
+        uint8 recipientVersion = StellarStrkey.validate(stellarRecipient);
+
+        (net, fee) = quote(amount, activate);
+
+        // Whatever Circle currently demands, bounded. Zero today; the messenger
+        // on Base predates the setting, and it is a proxy.
+        uint256 circleFee = _circleMinFee(net);
+        uint256 ceiling = (net * MAX_CIRCLE_FEE_BPS) / BPS_DENOM;
+        if (circleFee > ceiling) revert CircleFeeTooHigh(circleFee, ceiling);
+
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
+
+        // Effects before the external call.
+        accruedFees += fee;
+        totalFeesCollected += fee;
+        totalBridged += amount;
+
+        usdc.forceApprove(address(messenger), net);
+        messenger.depositForBurnWithHook(
+            net,
+            STELLAR_DOMAIN,
+            // Not the user: on Stellar the mint recipient must be a contract,
+            // so it is Circle's forwarder, which then pays the hook address.
+            forwarder,
+            address(usdc),
+            // Zero: anyone may trigger the mint, so nobody can hold it hostage.
+            bytes32(0),
+            circleFee,
+            FINALITY_STANDARD,
+            _hookData(stellarRecipient)
+        );
+        usdc.forceApprove(address(messenger), 0);
+
+        emit Bridged(msg.sender, stellarRecipient, amount, net, fee, recipientVersion, activate);
+    }
+
+    /**
+     * @notice Moves collected fees to the treasury.
+     * @dev Bounded by `accruedFees`. In normal operation that is the whole
+     * balance anyway, since user funds burn in the transaction they arrive in.
+     */
+    function withdrawFees(uint256 amount) external onlyOwner nonReentrant {
+        if (amount == 0 || amount > accruedFees) revert ExceedsAccruedFees(amount, accruedFees);
+        accruedFees -= amount;
+        usdc.safeTransfer(treasury, amount);
+        emit FeesWithdrawn(treasury, amount);
+    }
+
+    function setTreasury(address treasury_) external onlyOwner {
+        if (treasury_ == address(0)) revert ZeroAddress();
+        treasury = treasury_;
+        emit TreasuryUpdated(treasury_);
+    }
+
+    /**
+     * @notice Repoints the activation fee at what three XLM currently costs.
+     * @dev Bounded by {ACTIVATION_FEE_CEILING} and announced, so the change is
+     * visible on-chain before anyone pays it. Zero is allowed: giving accounts
+     * away is a decision, not a bug.
+     */
+    function setActivationFee(uint256 fee) external onlyOwner {
+        if (fee > ACTIVATION_FEE_CEILING) revert AboveCeiling(fee, ACTIVATION_FEE_CEILING);
+        emit ActivationFeeUpdated(activationFee, fee);
+        activationFee = fee;
+    }
+
+    /**
+     * @notice What a given amount would burn and cost, for the quote box and
+     * for {bridge} itself.
+     * @dev The percentage is taken on the whole amount, activation included,
+     * so that the quote is one subtraction the user can check rather than two
+     * they have to trust.
+     */
+    function quote(uint256 amount, bool activate) public view returns (uint256 net, uint256 fee) {
+        fee = (amount * FEE_BPS) / BPS_DENOM;
+        if (activate) fee += activationFee;
+        net = amount - fee; // remainder to the user; rounding never favours us
+    }
+
+    /**
+     * @notice What Circle would currently take out of a burn of `net`, so the
+     * quote box can show it rather than surprise the user with it.
+     */
+    function circleMinFee(uint256 net) external view returns (uint256) {
+        return _circleMinFee(net);
+    }
+
+    /**
+     * @dev Circle's `minFee` is a setting on the messenger, not a property of
+     * the transfer speed: `_depositForBurn` requires `maxFee` to clear it for
+     * every burn, standard included. Passing a hardcoded zero therefore works
+     * only for as long as the setting stays unset — and the messenger on Base
+     * is a proxy, so that is not a promise anyone made.
+     *
+     * `getMinFeeAmount` was added after that proxy's current implementation,
+     * so calling it outright would revert today. It is probed instead: a
+     * missing function means a deployment with no minimum, which is zero.
+     */
+    function _circleMinFee(uint256 net) private view returns (uint256) {
+        (bool ok, bytes memory result) =
+            address(messenger).staticcall(abi.encodeCall(ITokenMessengerV2.getMinFeeAmount, (net)));
+        if (!ok || result.length != 32) return 0;
+        return abi.decode(result, (uint256));
+    }
+
+    /// @notice The hook data a given recipient produces, exposed so the
+    /// frontend and the tests can check it against the Stellar side without
+    /// having to rebuild the layout by hand.
+    function hookDataFor(string calldata stellarRecipient) external pure returns (bytes memory) {
+        StellarStrkey.validate(stellarRecipient);
+        return _hookData(stellarRecipient);
+    }
+
+    /**
+     * @dev The layout Circle's forwarder parses:
+     *
+     *     bytes  0–23  magic, or zero to opt out of Circle relaying the forward
+     *     bytes 24–27  hook version, zero
+     *     bytes 28–31  length of the strkey that follows
+     *     bytes 32+    the strkey, UTF-8
+     */
+    function _hookData(string calldata stellarRecipient) private pure returns (bytes memory) {
+        return abi.encodePacked(HOOK_MAGIC, HOOK_VERSION, uint32(bytes(stellarRecipient).length), stellarRecipient);
+    }
+
+    /**
+     * @notice Disabled. Renouncing would leave accrued fees permanently
+     * unwithdrawable; transfer to a multisig instead.
+     */
+    function renounceOwnership() public view override onlyOwner {
+        revert ZeroAddress();
+    }
+}
