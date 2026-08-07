@@ -17,9 +17,20 @@ const CONFIG = {
   // Filled in after deployment. Empty on purpose until then.
   bridge: '0x69752D7C3d1c7C919bc24e34cD440762F642FF00',
 
-  // Where the watcher listens. It builds the setup, because the channel's
-  // sequence number and the funder's address are not the browser's business,
-  // and it takes the signed one back afterwards.
+  // Where the watcher listens. It builds the setup — the channel's sequence
+  // number and the funder's address are not the browser's business — and it
+  // takes the signed one back afterwards.
+  //
+  // Fixed here on purpose, and deliberately not read from the URL. This page
+  // signs whatever transaction that origin hands it, so a `?api=` override
+  // would be an invitation: point somebody at the real page with a hostile
+  // watcher behind it and Freighter is asked to sign whatever it likes. The
+  // origin has to be as fixed as the contract address, and it is listed in
+  // the CSP for the same reason.
+  //
+  // There is no hosted watcher yet, so this is a local one. A deployment that
+  // means to complete transfers has to change both this and `connect-src` in
+  // vercel.json.
   api: 'http://localhost:8787',
 
   base: {
