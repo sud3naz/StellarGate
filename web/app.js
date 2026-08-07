@@ -12,6 +12,12 @@ import { strkeyKind, underlyingAccount } from './strkey.js';
 import { encodeApprove, encodeBridge } from './abi.js';
 import { parseEnvelope, assertOnlyAskingForTrustline } from './envelope.js';
 import { CHAINS, routeStatus, fillChainPicker } from './chains.js';
+import {
+  discoverEvmWallets,
+  discoverStellarWallets,
+  stellarAddress,
+  signWithStellar,
+} from './wallets.js';
 
 const CONFIG = {
   network: 'testnet',
@@ -43,6 +49,7 @@ const CONFIG = {
   stellar: {
     horizon: 'https://horizon-testnet.stellar.org',
     soroban: 'https://soroban-testnet.stellar.org',
+    passphrase: 'Test SDF Network ; September 2015',
     usdcIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
     explorer: 'https://stellar.expert/explorer/testnet',
   },
@@ -61,6 +68,10 @@ const el = {
   fromChain: $('fromChain'),
   toChain: $('toChain'),
   swap: $('swap'),
+  sheet: $('sheet'),
+  sheetTitle: $('sheetTitle'),
+  sheetList: $('sheetList'),
+  sheetCancel: $('sheetCancel'),
   fromWho: $('fromWho'),
   toWho: $('toWho'),
   connectEvm: $('connectEvm'),
@@ -83,6 +94,9 @@ const el = {
 const state = {
   from: 'base',
   to: 'stellar',
+  stellarWallet: null,
+  /// The provider the user picked, not whichever one wrote to window first.
+  evmProvider: null,
   evm: null,
   stellar: null,
   balance: null, // BigInt, six decimals
@@ -169,17 +183,72 @@ function setStatus(key) {
 // Wallets
 // --------------------------------------------------------------------------
 
+/**
+ * Asks which wallet, and waits for an answer.
+ *
+ * @returns the chosen entry, or `null` if the user closed it. A cancel is an
+ *          answer and not an error.
+ */
+function chooseWallet(title, wallets, empty) {
+  return new Promise((resolve) => {
+    el.sheetTitle.textContent = title;
+    el.sheetList.innerHTML = '';
+
+    if (wallets.length === 0) {
+      const note = document.createElement('div');
+      note.className = 'none';
+      note.textContent = empty;
+      el.sheetList.append(note);
+    }
+
+    for (const wallet of wallets) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'wallet';
+      if (wallet.icon) {
+        const icon = document.createElement('img');
+        icon.src = wallet.icon;
+        icon.alt = '';
+        button.append(icon);
+      }
+      button.append(document.createTextNode(wallet.name));
+      button.addEventListener('click', () => finish(wallet));
+      el.sheetList.append(button);
+    }
+
+    function finish(picked) {
+      el.sheet.hidden = true;
+      el.sheetCancel.removeEventListener('click', onCancel);
+      el.sheet.removeEventListener('click', onBackdrop);
+      resolve(picked);
+    }
+    const onCancel = () => finish(null);
+    const onBackdrop = (event) => {
+      if (event.target === el.sheet) finish(null);
+    };
+
+    el.sheetCancel.addEventListener('click', onCancel);
+    el.sheet.addEventListener('click', onBackdrop);
+    el.sheet.hidden = false;
+  });
+}
+
 async function connectEvm() {
-  const provider = window.ethereum;
-  if (!provider) {
-    el.balance.textContent = 'No EVM wallet found. Rabby is the one we recommend.';
-    return;
-  }
+  const wallets = await discoverEvmWallets();
+  const picked = await chooseWallet(
+    'Choose a wallet',
+    wallets,
+    'No wallet announced itself. Install one — Rabby and MetaMask both work — then reload.',
+  );
+  if (!picked) return;
+
+  const provider = picked.provider;
   const [account] = await provider.request({ method: 'eth_requestAccounts' });
+  state.evmProvider = provider;
   state.evm = account;
   el.fromWho.textContent = `${account.slice(0, 6)}…${account.slice(-4)}`;
   el.fromWho.classList.remove('empty');
-  el.connectEvm.textContent = 'Base connected';
+  el.connectEvm.textContent = `${picked.name} connected`;
   el.connectEvm.disabled = true;
 
   await readBalance();
@@ -190,7 +259,7 @@ async function readBalance() {
   if (!state.evm) return;
   try {
     const data = `0x70a08231000000000000000000000000${state.evm.slice(2)}`;
-    const result = await window.ethereum.request({
+    const result = await state.evmProvider.request({
       method: 'eth_call',
       params: [{ to: CONFIG.base.usdc, data }, 'latest'],
     });
@@ -202,21 +271,22 @@ async function readBalance() {
 }
 
 async function connectStellar() {
-  const api = window.freighterApi;
-  if (!api) {
-    setStatus('idle');
-    el.statusText.textContent = 'Freighter not found. Install it, then reload.';
-    return;
-  }
-  try {
-    if (api.setAllowed) await api.setAllowed();
-    const result = await (api.getAddress ? api.getAddress() : api.getPublicKey());
-    const address = typeof result === 'string' ? result : result.address;
+  const wallets = discoverStellarWallets();
+  const picked = await chooseWallet(
+    'Choose a Stellar wallet',
+    wallets,
+    'No Stellar wallet found. Freighter is the one this page is tested against.',
+  );
+  if (!picked) return;
 
+  try {
+    const address = await stellarAddress(picked);
+
+    state.stellarWallet = picked;
     state.stellar = address;
     el.toWho.textContent = `${address.slice(0, 6)}…${address.slice(-6)}`;
     el.toWho.classList.remove('empty');
-    el.connectStellar.textContent = 'Freighter connected';
+    el.connectStellar.textContent = `${picked.name} connected`;
     el.connectStellar.disabled = true;
 
     // Prefill, but leave it editable: an exchange deposit needs a different
@@ -225,8 +295,9 @@ async function connectStellar() {
       el.dest.value = address;
       checkDestination();
     }
-  } catch {
-    /* the user declined; nothing to do */
+  } catch (error) {
+    setStatus('idle');
+    el.statusText.textContent = String(error?.message ?? error);
   }
   render();
 }
@@ -460,7 +531,7 @@ async function api(path, body) {
 }
 
 async function sendEvm(to, data) {
-  return window.ethereum.request({
+  return state.evmProvider.request({
     method: 'eth_sendTransaction',
     params: [{ from: state.evm, to, data }],
   });
@@ -468,7 +539,7 @@ async function sendEvm(to, data) {
 
 async function waitForReceipt(hash) {
   for (let i = 0; i < 60; i += 1) {
-    const receipt = await window.ethereum.request({
+    const receipt = await state.evmProvider.request({
       method: 'eth_getTransactionReceipt',
       params: [hash],
     });
@@ -502,11 +573,10 @@ async function bridgeOut() {
     if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the burn');
 
     setStatus('working', 'Sign the burn in Freighter…');
-    const signed = await window.freighterApi.signTransaction(built.body.xdr, {
-      networkPassphrase: 'Test SDF Network ; September 2015',
+    const xdr = await signWithStellar(state.stellarWallet, built.body.xdr, {
+      networkPassphrase: CONFIG.stellar.passphrase,
       address: state.stellar,
     });
-    const xdr = typeof signed === 'string' ? signed : signed.signedTxXdr;
 
     setStatus('working', 'Burning on Stellar…');
     const sent = await fetch(`${CONFIG.stellar.soroban}/`, {
@@ -560,11 +630,10 @@ async function bridge() {
         });
 
         setStatus('working', 'Sign the setup in Freighter…');
-        const signed = await window.freighterApi.signTransaction(built.body.xdr, {
-          networkPassphrase: 'Test SDF Network ; September 2015',
+        setupXdr = await signWithStellar(state.stellarWallet, built.body.xdr, {
+          networkPassphrase: CONFIG.stellar.passphrase,
           address: state.stellar,
         });
-        setupXdr = typeof signed === 'string' ? signed : signed.signedTxXdr;
       }
     }
 

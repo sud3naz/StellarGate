@@ -223,6 +223,7 @@ api/src/config.js             networks, issuers, Circle's contracts
 web/index.html                the bridge, drawn as a bridge
 web/app.js                    wallets, the destination check, the transfer
 web/chains.js                 the ends we have, and the ones we do not yet
+web/wallets.js                finding the wallets somebody has, not guessing
 web/abi.js                    the two calls, encoded by hand and checked
 web/envelope.js               reads a setup before Freighter is asked to sign it
 web/strkey.js                 the browser copy of the address check

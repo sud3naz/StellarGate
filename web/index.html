@@ -206,6 +206,39 @@ input[type=text].addr.bad{border-color:var(--bad);background:var(--bad-wash)}
 .step.on .t,.step.done .t{color:var(--ink)}
 .step .t small{display:block;color:var(--ink-faint);font-size:12.5px;margin-top:2px}
 
+/* ---------- picking a wallet ----------
+   `window.ethereum` is whichever extension won a race. A list is the only way
+   the choice belongs to the person making it. */
+.sheet{
+  position:fixed;inset:0;background:rgba(23,21,18,.34);
+  display:grid;place-items:center;padding:20px;z-index:20;
+}
+.sheet[hidden]{display:none}
+.sheet .panel{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  width:min(360px,100%);overflow:hidden;
+  box-shadow:0 20px 60px -20px rgba(23,21,18,.5);
+}
+.sheet h4{
+  margin:0;padding:15px 18px;font-size:13px;font-weight:650;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--ink-faint);
+  border-bottom:1px solid var(--line);
+}
+.sheet .wallet{
+  display:flex;align-items:center;gap:11px;width:100%;
+  border:0;border-top:1px solid var(--line);background:var(--card);
+  padding:13px 18px;font:inherit;font-size:14.5px;font-weight:600;
+  color:var(--ink);cursor:pointer;text-align:left;
+}
+.sheet .wallet:first-of-type{border-top:0}
+.sheet .wallet:hover{background:var(--beige)}
+.sheet .wallet img{width:22px;height:22px;border-radius:6px;flex:none}
+.sheet .none{padding:16px 18px;font-size:13.5px;color:var(--ink-soft);line-height:1.5}
+.sheet .cancel{
+  width:100%;border:0;border-top:1px solid var(--line);background:var(--beige);
+  padding:12px;font:inherit;font-weight:600;font-size:13.5px;color:var(--ink-soft);cursor:pointer;
+}
+
 /* ---------- footer ---------- */
 footer{margin-top:22px;font-size:12.5px;line-height:1.6;color:var(--ink-faint)}
 footer p{margin:0 0 8px}
@@ -265,8 +298,8 @@ footer a{color:var(--ink-soft)}
     </div>
 
     <div class="connects">
-      <button id="connectEvm">Connect Rabby</button>
-      <button id="connectStellar">Connect Freighter</button>
+      <button id="connectEvm">Connect</button>
+      <button id="connectStellar">Connect</button>
     </div>
 
     <div class="fields">
@@ -345,6 +378,13 @@ footer a{color:var(--ink-soft)}
   </aside>
   </div>
 
+</div>
+<div class="sheet" id="sheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <h4 id="sheetTitle">Choose a wallet</h4>
+    <div id="sheetList"></div>
+    <button class="cancel" id="sheetCancel" type="button">Cancel</button>
+  </div>
 </div>
 <script type="module" src="app.js"></script>
 </body>
