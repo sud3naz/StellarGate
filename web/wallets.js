@@ -83,21 +83,31 @@ const STELLAR_WALLETS = [
   {
     id: 'freighter',
     name: 'Freighter',
-    // Its own library, vendored. `window.freighter` is the extension saying
-    // it is there; `window.freighterApi` is the library saying it has loaded.
-    detect: () => window.freighter === true && Boolean(window.freighterApi),
+    // Asked, not guessed at. `isConnected()` checks `window.freighter` and,
+    // when that is absent, falls back to a postMessage round-trip to the
+    // extension — so requiring the global finds only the versions that happen
+    // to set one. That was the second wrong answer this page gave somebody
+    // with Freighter installed.
+    detect: async () => {
+      const api = window.freighterApi;
+      if (!api?.isConnected) return false;
+      const answer = await api.isConnected();
+      return answer === true || answer?.isConnected === true;
+    },
     api: () => window.freighterApi,
   },
 ];
 
-export function discoverStellarWallets() {
-  return STELLAR_WALLETS.filter((wallet) => {
+export async function discoverStellarWallets() {
+  const found = [];
+  for (const wallet of STELLAR_WALLETS) {
     try {
-      return wallet.detect();
+      if (await wallet.detect()) found.push({ id: wallet.id, name: wallet.name, api: wallet.api() });
     } catch {
-      return false;
+      // A wallet that cannot answer whether it is there is not there.
     }
-  }).map((wallet) => ({ id: wallet.id, name: wallet.name, api: wallet.api() }));
+  }
+  return found;
 }
 
 /**

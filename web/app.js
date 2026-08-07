@@ -255,7 +255,16 @@ async function connectEvm() {
   } catch (error) {
     el.balance.textContent = String(error?.message ?? error);
   }
-  el.fromWho.textContent = `${account.slice(0, 6)}…${account.slice(-4)}`;
+  // Enough of the address to tell two accounts in the same wallet apart, and
+  // a link so it can be checked rather than trusted. Four characters at each
+  // end is not enough for that and reads as reassurance.
+  el.fromWho.innerHTML = '';
+  const link = document.createElement('a');
+  link.href = `${CONFIG.base.explorer}/address/${account}`;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = `${account.slice(0, 10)}…${account.slice(-8)}`;
+  el.fromWho.append(link);
   el.fromWho.classList.remove('empty');
   el.connectEvm.textContent = `${picked.name} connected`;
   el.connectEvm.disabled = true;
@@ -309,7 +318,11 @@ async function readBalance() {
       params: [{ to: CONFIG.base.usdc, data }, 'latest'],
     });
     state.balance = BigInt(result);
-    el.balance.textContent = `${formatUsdc(state.balance)} USDC available on Base.`;
+    const network = CONFIG.network === 'testnet' ? 'Base Sepolia' : 'Base';
+    el.balance.textContent =
+      state.balance === 0n
+        ? `No USDC on ${network} in this account. That is the balance, not a failure to read it — testnet USDC comes from Circle's faucet.`
+        : `${formatUsdc(state.balance)} USDC on ${network}.`;
   } catch (error) {
     // Saying only "could not" sends people looking at their balance, which is
     // the one thing that is fine.
@@ -320,7 +333,7 @@ async function readBalance() {
 }
 
 async function connectStellar() {
-  const wallets = discoverStellarWallets();
+  const wallets = await discoverStellarWallets();
   const picked = await chooseWallet(
     'Choose a Stellar wallet',
     wallets,
@@ -334,7 +347,13 @@ async function connectStellar() {
 
     state.stellarWallet = picked;
     state.stellar = address;
-    el.toWho.textContent = `${address.slice(0, 6)}…${address.slice(-6)}`;
+    el.toWho.innerHTML = '';
+    const seen = document.createElement('a');
+    seen.href = `${CONFIG.stellar.explorer}/account/${address}`;
+    seen.target = '_blank';
+    seen.rel = 'noopener';
+    seen.textContent = `${address.slice(0, 10)}…${address.slice(-8)}`;
+    el.toWho.append(seen);
     el.toWho.classList.remove('empty');
     el.connectStellar.textContent = `${picked.name} connected`;
     el.connectStellar.disabled = true;
