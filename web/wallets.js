@@ -101,6 +101,29 @@ export function discoverStellarWallets() {
 }
 
 /**
+ * Reads the address out of whichever Stellar wallet was picked.
+ *
+ * Freighter's library answers with `{ address, error }` rather than throwing,
+ * so an error object read as an address would be a string nobody can spend
+ * to. `requestAccess` is the one that prompts; `getAddress` only answers if
+ * the site has been allowed before.
+ */
+export async function stellarAddress(wallet) {
+  const api = wallet.api;
+
+  if (wallet.id === 'freighter') {
+    const asked = await api.requestAccess();
+    if (asked?.error) throw new Error(asked.error.message ?? String(asked.error));
+    if (asked?.address) return asked.address;
+
+    const result = await api.getAddress();
+    if (result?.error) throw new Error(result.error.message ?? String(result.error));
+    return result.address;
+  }
+  throw new Error(`${wallet.name} is not one this page knows how to ask`);
+}
+
+/**
  * Signs an XDR with whichever Stellar wallet was picked.
  *
  * The same spread of interfaces as reading an address, for the same reason:
