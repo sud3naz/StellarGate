@@ -305,6 +305,12 @@ is not gated behind a fee that user never owed.
   Claiming is still done for them, because `receiveMessage` is permissionless
   but somebody has to call it — leaving that to a user with no ETH would mean
   not arriving at all rather than arriving without gas money.
+- Stellar wallets other than Freighter. Three were listed at one point,
+  written from memory, and checking them against Stellar Wallets Kit found
+  two of the three globals did not exist and the third needed waiting for.
+  They are gone rather than left to fail on somebody's click. Adding them
+  properly means adopting the Kit, which brings Preact, Ledger, Trezor and
+  WalletConnect and needs a bundler this page does not have.
 - Concurrency. A channel account exists so that two transfers in flight
   cannot invalidate each other's sequence number, and every run so far has
   been one at a time — so the reason the channel exists is the one thing it

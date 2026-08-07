@@ -324,7 +324,8 @@ async function connectStellar() {
   const picked = await chooseWallet(
     'Choose a Stellar wallet',
     wallets,
-    'No Stellar wallet found. Freighter is the one this page is tested against.',
+    'Freighter is the only Stellar wallet this page can ask so far, and it is ' +
+      'not answering. Install it, or unlock it, then reload.',
   );
   if (!picked) return;
 
