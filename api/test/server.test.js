@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createHandler } from '../src/server.js';
+import { createHandler, listen } from '../src/server.js';
 import { Store } from '../src/watcher/store.js';
 import { UnpaidBurn } from '../src/watcher/burn.js';
 
@@ -129,4 +129,42 @@ test('health reports the queue', async () => {
 test('an unknown route is refused', async () => {
   const { handle } = harness();
   assert.equal((await handle({ method: 'GET', path: '/whatever' })).status, 404);
+});
+
+// --- letting the page talk to it ------------------------------------------
+
+/**
+ * The page and the watcher are never the same origin. However this is
+ * arranged — a static host and a service, or two ports on one laptop — the
+ * browser asks permission first and refuses everything without it.
+ */
+test('a preflight is answered rather than looked up as a route', async () => {
+  const answered = [];
+  const fakeServer = {
+    listen() {},
+  };
+  const created = (handler) => {
+    fakeServer.handler = handler;
+    return fakeServer;
+  };
+
+  const { handle } = harness();
+  listen(handle, { port: 0, createServer: created });
+
+  const res = {
+    headers: {},
+    setHeader(k, v) {
+      this.headers[k] = v;
+    },
+    writeHead(status) {
+      answered.push(status);
+      return this;
+    },
+    end() {},
+  };
+  await fakeServer.handler({ method: 'OPTIONS', url: '/setup', [Symbol.asyncIterator]: async function* () {} }, res);
+
+  assert.deepEqual(answered, [204], 'a 404 here refuses the request that follows');
+  assert.equal(res.headers['access-control-allow-origin'], '*');
+  assert.match(res.headers['access-control-allow-headers'], /content-type/);
 });

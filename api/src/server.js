@@ -145,8 +145,24 @@ export function createHandler({ store, verifyBurn, buildSetup = null, buildOutbo
  * A node:http adapter, kept thin on purpose. The routing above is testable
  * without binding a port; this is the part that cannot be.
  */
-export function listen(handle, { port = 8787, createServer } = {}) {
+export function listen(handle, { port = 8787, createServer, allowOrigin = '*' } = {}) {
   const server = createServer(async (req, res) => {
+    // The page and the watcher are different origins whichever way this is
+    // arranged — a static host and a service, or a local server on one port
+    // talking to one on another — so the browser asks permission first and
+    // refuses everything without it.
+    res.setHeader('access-control-allow-origin', allowOrigin);
+    res.setHeader('access-control-allow-headers', 'content-type');
+    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+
+    // A POST carrying JSON is not a simple request, so it arrives twice: once
+    // to ask, once to do. Answering the question with a 404 refuses the
+    // request that follows.
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204).end();
+      return;
+    }
+
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
 

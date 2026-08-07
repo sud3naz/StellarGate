@@ -633,11 +633,26 @@ render();
 // --------------------------------------------------------------------------
 
 async function api(path, body) {
-  const response = await fetch(`${CONFIG.api}${path}`, {
-    method: body ? 'POST' : 'GET',
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response;
+  try {
+    response = await fetch(`${CONFIG.api}${path}`, {
+      method: body ? 'POST' : 'GET',
+      headers: body ? { 'content-type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // `fetch` says "Failed to fetch" for a server that is not running, a
+    // browser that blocked the request, and a network that is not there. It
+    // is the same three words for three different jobs, so the sentence has
+    // to name what was being reached for.
+    throw new Error(
+      `Could not reach the bridge service at ${CONFIG.api}. ` +
+        (CONFIG.api.startsWith('http://') && location.protocol === 'https:'
+          ? 'This page is served over https and the service is not, which browsers refuse. ' +
+            'Open the page from the same machine over http, or put the service behind https.'
+          : 'It may not be running.'),
+    );
+  }
   return { status: response.status, body: await response.json().catch(() => ({})) };
 }
 
