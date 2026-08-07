@@ -81,7 +81,6 @@ const el = {
   balance: $('balance'),
   dest: $('dest'),
   status: $('status'),
-  statusText: $('statusText'),
   qSend: $('qSend'),
   qFee: $('qFee'),
   qAct: $('qAct'),
@@ -173,11 +172,54 @@ const STATUS = {
   error: ['is-bad', '!', '<b>Could not reach Horizon.</b><span class="sub">The address may still be fine; we simply could not check it just now.</span>'],
 };
 
-function setStatus(key) {
-  const [cls, icon, text] = STATUS[key];
+/**
+ * The kinds a status can be, for the ones that carry their own sentence.
+ *
+ * {STATUS} above is the presets — a fixed situation with fixed wording. These
+ * are for the running commentary, where the wording is the point and only the
+ * colour is reusable.
+ */
+const KINDS = {
+  idle: ['is-idle', '?'],
+  working: ['is-idle', '·'],
+  done: ['is-ok', '✓'],
+  warn: ['is-warn', '+'],
+  bad: ['is-bad', '!'],
+};
+
+/**
+ * @param key  A preset from {STATUS}, or a kind from {KINDS}.
+ * @param html What to say, when the kind does not say it already.
+ *
+ * Both shapes are here because both were being called. The second one was
+ * invented and never written: fifteen call sites passed a sentence to a
+ * function that took one argument and read a table, so every one of them
+ * destructured `undefined` and threw. That is what "the button does nothing"
+ * was — the click worked, the first line of work threw, and the error went
+ * somewhere nobody could see it.
+ */
+function setStatus(key, html) {
+  const preset = STATUS[key];
+  const [cls, icon] = preset ? preset : (KINDS[key] ?? KINDS.bad);
+  const text = html ?? preset?.[2] ?? '';
   el.status.className = `status ${cls}`;
   el.status.innerHTML = `<span class="ic">${icon}</span><span>${text}</span>`;
 }
+
+/**
+ * Says something went wrong, where it can be read.
+ *
+ * Not `el.statusText`: `setStatus` replaces the contents of the status box, so
+ * the span that was captured at startup is detached the first time anything
+ * happens. Writing an error to it succeeds and shows nobody anything, which is
+ * a worse failure than the one being reported.
+ */
+function setError(error) {
+  setStatus('bad', escapeHtml(String(error?.message ?? error)));
+}
+
+const escapeHtml = (text) =>
+  text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // --------------------------------------------------------------------------
 // Wallets
@@ -366,7 +408,7 @@ async function connectStellar() {
     }
   } catch (error) {
     setStatus('idle');
-    el.statusText.textContent = String(error?.message ?? error);
+    setError(error);
   }
   render();
 }
@@ -664,7 +706,7 @@ async function bridgeOut() {
     setStatus('done', `Burned. The bridge will claim it on ${CHAINS[state.to].name}.`);
   } catch (error) {
     setStatus('idle');
-    el.statusText.textContent = String(error?.message ?? error);
+    setError(error);
     el.go.disabled = false;
   }
 }
@@ -733,7 +775,7 @@ async function bridge() {
     watchDelivery(txHash);
   } catch (error) {
     setStatus('idle');
-    el.statusText.textContent = String(error?.message ?? error);
+    setError(error);
     el.go.disabled = false;
   }
 }

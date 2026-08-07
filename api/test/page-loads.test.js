@@ -94,3 +94,34 @@ test('the page asks for nothing that is not there', () => {
     assert.doesNotThrow(() => readFileSync(join(web, src)), `${src} is referenced and missing`);
   }
 });
+
+/**
+ * Every `setStatus` call names something that exists.
+ *
+ * Fifteen of them did not. `setStatus` read a table and took one argument;
+ * the calls passed a kind and a sentence, so the lookup returned undefined
+ * and destructuring it threw on the first line of every transfer. The button
+ * worked perfectly and the work behind it never started.
+ *
+ * A call site is not a file, so loading the modules does not catch this — the
+ * throw only happens when somebody clicks. Reading the calls does.
+ */
+test('setStatus is only ever asked for a status it has', () => {
+  const source = readFileSync(join(web, 'app.js'), 'utf8');
+
+  const known = new Set();
+  for (const table of ['STATUS', 'KINDS']) {
+    const block = source.slice(source.indexOf(`const ${table} = {`));
+    const body = block.slice(0, block.indexOf('\n};'));
+    for (const [, key] of body.matchAll(/^\s{2}(\w+):/gm)) known.add(key);
+  }
+
+  assert.ok(known.size > 5, 'the tables were not found where this expects them');
+
+  const calls = [...source.matchAll(/setStatus\(\s*'(\w+)'/g)].map(([, key]) => key);
+  assert.ok(calls.length > 5, 'no calls found; this test has stopped watching anything');
+
+  for (const key of new Set(calls)) {
+    assert.ok(known.has(key), `setStatus('${key}') names a status that does not exist`);
+  }
+});
