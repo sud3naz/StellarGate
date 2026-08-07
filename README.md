@@ -182,9 +182,11 @@ src/StellarStrkey.sol         base32 + CRC16, so a typo cannot reach Stellar
 api/src/flow.js               the ordering, as rules rather than as prose
 api/src/stellar/account.js    what a destination is missing, and what it costs
 api/src/stellar/activation.js buying an account, or just the trustline
+api/src/watcher/index.js      the ordering, as one step that can be tested
 api/src/watcher/burn.js       proof that a burn happened and paid for this
 api/src/watcher/store.js      one burn buys one activation, across restarts
 api/src/watcher/attestation.js  asking Circle, and reading a delay correctly
+api/src/watcher/deliver.js    mint_and_forward, and what a refusal means
 api/src/config.js             networks, issuers, Circle's contracts
 
 web/index.html                the bridge, drawn as a bridge
@@ -194,10 +196,10 @@ web/strkey.js                 the browser copy of the address check
 
 ```bash
 forge test          # 47
-cd api && npm test  # 86, the browser included
+cd api && npm test  # 106, the browser included
 ```
 
-133 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+153 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real
@@ -255,11 +257,12 @@ is not gated behind a fee that user never owed.
 
 ## What is not here yet
 
-- The watcher itself. Its first job — proving a burn paid for what is about to
-  be spent — is written and tested in `watcher/burn.js`; the loop around it is
-  not. What remains: following `Bridged` logs, polling the attestation,
-  calling `mint_and_forward`, retrying a delivery that arrived before its
-  trustline, and a store that will not let one burn open two accounts.
+- The two ends of the watcher, which is otherwise written. `step()` moves a
+  transfer from a burn to a delivery and is tested against every branch that
+  spends money; what it still has to be wired to is a follower for Base's
+  `Bridged` logs at one end, and an endpoint that takes the signed setup from
+  the browser at the other. Neither is hard. Both are plumbing.
+- A run loop with a timer. `sweep()` does one pass; nothing schedules it yet.
 - Deployment scripts. Deliberately — nothing gets deployed without being asked.
 - Coverage for the two shapes `plan()` returns that testnet never exercised:
   `trustline`, and the `topup` that carries the argument this whole thing
