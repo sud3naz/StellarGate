@@ -17,6 +17,7 @@ import { IRIS, fetchAttestation } from './watcher/attestation.js';
 import { deliver, FORWARDER } from './watcher/deliver.js';
 import { submit } from './stellar/activation.js';
 import { buildSetupFor } from './stellar/setup.js';
+import { buildOutbound as buildOutboundTx } from './stellar/outbound.js';
 import { claimOnEvm, MESSAGE_TRANSMITTER, STELLAR_DOMAIN } from './watcher/reverse.js';
 import { run } from './watcher/run.js';
 
@@ -119,10 +120,23 @@ export function assemble(env = process.env) {
       testnet: isTestnet,
     });
 
+  const buildOutbound = reverseContract
+    ? ({ from, amount, recipient }) =>
+        buildOutboundTx(
+          { from, amount, recipient },
+          {
+            rpcUrl: env.BRIDGE_SOROBAN_RPC || 'https://soroban-testnet.stellar.org',
+            contractId: reverseContract,
+            networkPassphrase: passphrase,
+          },
+        )
+    : null;
+
   return {
     store,
     rpc,
     bridge,
+    buildOutbound,
     reverse,
     attestOut,
     claim,
@@ -140,7 +154,12 @@ export async function main(env = process.env) {
   const parts = assemble(env);
   const controller = new AbortController();
 
-  const server = listen(createHandler({ store: parts.store, verifyBurn: parts.verifyBurn, buildSetup: parts.buildSetup }), {
+  const server = listen(createHandler({
+      store: parts.store,
+      verifyBurn: parts.verifyBurn,
+      buildSetup: parts.buildSetup,
+      buildOutbound: parts.buildOutbound,
+    }), {
     port: parts.port,
     createServer,
   });

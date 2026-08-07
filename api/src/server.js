@@ -27,7 +27,7 @@ const json = (status, body) => ({ status, body });
  * @param verifyBurn `(txHash, recipient) => proof | null`, from
  *        {verifyPaidBurn} with the RPC and bridge address bound.
  */
-export function createHandler({ store, verifyBurn, buildSetup = null }) {
+export function createHandler({ store, verifyBurn, buildSetup = null, buildOutbound = null }) {
   return async function handle({ method, path, body }) {
     if (method === 'GET' && path === '/health') {
       return json(200, { ok: true, pending: store.pending().length });
@@ -95,6 +95,30 @@ export function createHandler({ store, verifyBurn, buildSetup = null }) {
       } catch (error) {
         if (error instanceof DoublePayment) return json(409, { error: error.message });
         throw error;
+      }
+    }
+
+    /**
+     * Builds the outbound burn. Unsigned and unsimulated by the browser,
+     * because a Soroban invocation needs its footprint worked out before it
+     * can be submitted and doing that after signing spends a signature on
+     * nothing.
+     *
+     * Nothing is recorded here either. The burn is the commitment, and until
+     * it lands there is nothing to remember — the watcher finds it in the
+     * contract's own events whether this endpoint was ever called or not.
+     */
+    if (method === 'POST' && path === '/outbound') {
+      if (!buildOutbound) return json(501, { error: 'this watcher does not carry that direction' });
+
+      const { from, amount, recipient } = body ?? {};
+      if (!from || !amount || !recipient) {
+        return json(400, { error: 'from, amount and recipient are required' });
+      }
+      try {
+        return json(200, await buildOutbound({ from, amount, recipient }));
+      } catch (error) {
+        return json(400, { error: String(error?.message ?? error) });
       }
     }
 

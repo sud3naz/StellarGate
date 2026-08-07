@@ -11,6 +11,7 @@
 import { strkeyKind, underlyingAccount } from './strkey.js';
 import { encodeApprove, encodeBridge } from './abi.js';
 import { parseEnvelope, assertOnlyAskingForTrustline } from './envelope.js';
+import { CHAINS, routeStatus, fillChainPicker } from './chains.js';
 
 const CONFIG = {
   network: 'testnet',
@@ -41,6 +42,7 @@ const CONFIG = {
   },
   stellar: {
     horizon: 'https://horizon-testnet.stellar.org',
+    soroban: 'https://soroban-testnet.stellar.org',
     usdcIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
     explorer: 'https://stellar.expert/explorer/testnet',
   },
@@ -56,6 +58,9 @@ const CONFIG = {
 const $ = (id) => document.getElementById(id);
 const el = {
   net: $('net'),
+  fromChain: $('fromChain'),
+  toChain: $('toChain'),
+  swap: $('swap'),
   fromWho: $('fromWho'),
   toWho: $('toWho'),
   connectEvm: $('connectEvm'),
@@ -76,6 +81,8 @@ const el = {
 };
 
 const state = {
+  from: 'base',
+  to: 'stellar',
   evm: null,
   stellar: null,
   balance: null, // BigInt, six decimals
@@ -231,9 +238,45 @@ async function connectStellar() {
 let checkToken = 0;
 
 async function checkDestination() {
-  const address = el.dest.value.trim().toUpperCase();
   el.dest.classList.remove('bad');
   state.inspection = null;
+
+  // An EVM destination has nothing to inspect. There is no account to create,
+  // no trustline to add, and no checksum worth trusting — EIP-55 is about
+  // capitalisation and says nothing once an address has been lowercased. So
+  // the check is a shape and the honesty is in saying what does not happen.
+  if (CHAINS[state.to].family === 'evm') {
+    const raw = el.dest.value.trim();
+    if (!raw) {
+      setStatus('idle');
+      render();
+      return;
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(raw)) {
+      el.dest.classList.add('bad');
+      setStatus('bad', 'That is not an address on ' + CHAINS[state.to].name + '.');
+      render();
+      return;
+    }
+    if (/^0x0{40}$/.test(raw)) {
+      el.dest.classList.add('bad');
+      setStatus('bad', 'That address is a hole. Nothing comes back out of it.');
+      render();
+      return;
+    }
+    state.inspection = { needs: 'nothing', evm: raw };
+    setStatus(
+      'warn',
+      '<b>The USDC will arrive; the gas will not.</b>' +
+        '<span class="sub">Nothing is set up for you on ' +
+        CHAINS[state.to].name +
+        ' — you will need its own currency before you can move what lands there.</span>',
+    );
+    render();
+    return;
+  }
+
+  const address = el.dest.value.trim().toUpperCase();
 
   if (!address) {
     setStatus('idle');
@@ -282,23 +325,34 @@ function render() {
     el.qGet.textContent = net > 0n ? `${formatUsdc(net)} USDC` : '—';
   }
 
+  const route = pickedRoute();
+  const outbound = CHAINS[state.from].family === 'stellar';
   const ready =
-    state.evm && state.stellar && state.inspection && amount !== null && amount >= floor;
+    route.status.ok &&
+    state.evm &&
+    state.stellar &&
+    state.inspection &&
+    amount !== null &&
+    amount >= floor;
 
   el.go.disabled = !ready || !CONFIG.bridge;
-  el.go.textContent = !state.evm || !state.stellar
-    ? 'Connect both wallets to begin'
-    : !state.inspection
-      ? 'Enter a Stellar address'
-      : amount === null || amount === 0n
-        ? 'Enter an amount'
-        : amount < floor
-          ? `Minimum ${formatUsdc(floor)} USDC${activate ? ' with activation' : ''}`
-          : !CONFIG.bridge
-            ? 'Not deployed yet'
-            : activate
-              ? 'Sign the Stellar setup'
-              : 'Bridge to Stellar';
+  el.go.textContent = !route.status.ok
+    ? route.status.reason
+    : !state.evm || !state.stellar
+      ? 'Connect both wallets to begin'
+      : !state.inspection
+        ? `Enter a ${CHAINS[state.to].name} address`
+        : amount === null || amount === 0n
+          ? 'Enter an amount'
+          : amount < floor
+            ? `Minimum ${formatUsdc(floor)} USDC${activate ? ' with activation' : ''}`
+            : !CONFIG.bridge
+              ? 'Not deployed yet'
+              : outbound
+                ? `Bridge to ${CHAINS[state.to].name}`
+                : activate
+                  ? 'Sign the Stellar setup'
+                  : 'Bridge to Stellar';
 
   el.steps.forEach((step, i) => step.classList.toggle('on', ready && i === 0));
 }
@@ -313,6 +367,68 @@ el.amount.addEventListener('input', render);
 el.max.addEventListener('click', () => {
   if (state.balance === null) return;
   el.amount.value = formatUsdc(state.balance).replace(/,/g, '');
+  render();
+});
+
+// --------------------------------------------------------------------------
+// Which way, and between what
+// --------------------------------------------------------------------------
+
+/**
+ * Reads the two pickers and tells the rest of the page what it is looking at.
+ *
+ * A route is a contract on one side and a watcher that knows how to finish on
+ * the other, not a pair of chains that both exist. So a pair that is not built
+ * says so plainly rather than letting somebody get as far as signing.
+ */
+function pickedRoute() {
+  const from = el.fromChain.value;
+  const to = el.toChain.value;
+  return { from, to, status: routeStatus(from, to) };
+}
+
+function onChainChange(which) {
+  return () => {
+    const from = el.fromChain.value;
+    const to = el.toChain.value;
+
+    // Picking the same chain twice is a mistake nobody means to make, so the
+    // other end moves out of the way rather than an error appearing.
+    if (from === to) {
+      const other = which === 'from' ? 'toChain' : 'fromChain';
+      const away = Object.keys(CHAINS).find((id) => id !== from && CHAINS[id].live);
+      if (away) el[other].value = away;
+    }
+
+    state.from = el.fromChain.value;
+    state.to = el.toChain.value;
+    checkDestination();
+    render();
+  };
+}
+
+fillChainPicker(el.fromChain, state.from);
+fillChainPicker(el.toChain, state.to);
+el.fromChain.addEventListener('change', onChainChange('from'));
+el.toChain.addEventListener('change', onChainChange('to'));
+
+el.swap.addEventListener('click', () => {
+  const from = el.fromChain.value;
+  el.fromChain.value = el.toChain.value;
+  el.toChain.value = from;
+  state.from = el.fromChain.value;
+  state.to = el.toChain.value;
+
+  // The address field means a different thing in each direction, and carrying
+  // a Stellar address over into a field wanting an EVM one is a typo waiting
+  // to be signed.
+  el.dest.value = '';
+  state.inspection = null;
+  el.dest.placeholder =
+    CHAINS[state.to].family === 'stellar'
+      ? 'G… or M… for an exchange deposit'
+      : '0x… on ' + CHAINS[state.to].name;
+  checkDestination();
   render();
 });
 
@@ -362,7 +478,61 @@ async function waitForReceipt(hash) {
   throw new Error('the transaction did not confirm');
 }
 
+/**
+ * Out of Stellar, into an EVM chain.
+ *
+ * Shorter than the way in because there is nothing to build at the far end.
+ * The burn is the only thing signed, and the user is the source of their own
+ * transaction — they hold USDC on Stellar, so they hold the XLM that lets
+ * them, and nothing of ours is at stake before the burn lands.
+ */
+async function bridgeOut() {
+  const amount = parseUsdc(el.amount.value);
+  const recipient = el.dest.value.trim();
+
+  el.go.disabled = true;
+  try {
+    setStatus('working', 'Preparing the burn…');
+    // Stellar carries seven decimals where the EVM side carries six.
+    const built = await api('/outbound', {
+      from: state.stellar,
+      amount: (amount * 10n).toString(),
+      recipient,
+    });
+    if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the burn');
+
+    setStatus('working', 'Sign the burn in Freighter…');
+    const signed = await window.freighterApi.signTransaction(built.body.xdr, {
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      address: state.stellar,
+    });
+    const xdr = typeof signed === 'string' ? signed : signed.signedTxXdr;
+
+    setStatus('working', 'Burning on Stellar…');
+    const sent = await fetch(`${CONFIG.stellar.soroban}/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: { transaction: xdr },
+      }),
+    });
+    const result = (await sent.json()).result ?? {};
+    if (result.status === 'ERROR') throw new Error('the burn was rejected');
+
+    setStatus('done', `Burned. The bridge will claim it on ${CHAINS[state.to].name}.`);
+  } catch (error) {
+    setStatus('idle');
+    el.statusText.textContent = String(error?.message ?? error);
+    el.go.disabled = false;
+  }
+}
+
 async function bridge() {
+  if (CHAINS[state.from].family === 'stellar') return bridgeOut();
+
   const amount = parseUsdc(el.amount.value);
   const recipient = el.dest.value.trim();
   const activate = state.inspection?.needs !== 'nothing';

@@ -207,6 +207,7 @@ api/src/flow.js               the ordering, as rules rather than as prose
 api/src/stellar/account.js    what a destination is missing, and what it costs
 api/src/stellar/activation.js buying an account, or just the trustline
 api/src/stellar/setup.js      builds what the user signs, and signs half of it
+api/src/stellar/outbound.js   builds the outbound burn, footprint and all
 api/src/watcher/index.js      the ordering, as one step that can be tested
 api/src/watcher/burn.js       proof that a burn happened and paid for this
 api/src/watcher/store.js      one burn buys one activation, across restarts
@@ -221,6 +222,7 @@ api/src/config.js             networks, issuers, Circle's contracts
 
 web/index.html                the bridge, drawn as a bridge
 web/app.js                    wallets, the destination check, the transfer
+web/chains.js                 the ends we have, and the ones we do not yet
 web/abi.js                    the two calls, encoded by hand and checked
 web/envelope.js               reads a setup before Freighter is asked to sign it
 web/strkey.js                 the browser copy of the address check
@@ -302,8 +304,6 @@ is not gated behind a fee that user never owed.
   Claiming is still done for them, because `receiveMessage` is permissionless
   but somebody has to call it — leaving that to a user with no ETH would mean
   not arriving at all rather than arriving without gas money.
-- A direction control in the interface. Both directions work and only one of
-  them is drawn.
 - Concurrency. A channel account exists so that two transfers in flight
   cannot invalidate each other's sequence number, and every run so far has
   been one at a time — so the reason the channel exists is the one thing it
