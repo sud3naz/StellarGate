@@ -357,6 +357,29 @@ is not gated behind a fee that user never owed.
   source chain. Worth settling before the watcher's retry policy is written
   around it.
 
+## Testing it from another machine
+
+The page and the watcher both bind every interface, so a second machine on the
+same network reaches them at this one's address rather than `localhost` —
+which over there means itself, and is empty.
+
+```bash
+cd web && node serve.mjs        # the page, on 5173
+cd api && npm run watcher       # the service, on 8787
+```
+
+Then open `http://<this machine's address>:5173`. The page works out where the
+watcher is from the origin it was served from, so nothing needs configuring at
+the other end.
+
+Derived, and deliberately not read from the URL: this page signs whatever
+transaction that origin hands back, so a `?api=` would let somebody send a
+link to the real page with a hostile watcher behind it. The origin the page
+came from carries no such invitation.
+
+A phone will not get far. Freighter and the EVM wallets are browser
+extensions, and mobile browsers do not have them.
+
 ## Running the watcher
 
 ```bash

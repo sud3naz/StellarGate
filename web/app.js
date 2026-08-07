@@ -19,6 +19,30 @@ import {
   signWithStellar,
 } from './wallets.js';
 
+/**
+ * Where the watcher is.
+ *
+ * Derived from this page's own origin when it is being served locally, so a
+ * second machine on the same network reaches the watcher on the machine that
+ * served it the page rather than looking for one on itself — which is what
+ * `localhost` means over there, and it is empty.
+ *
+ * Derived, and specifically not read from the URL. This page signs whatever
+ * transaction that origin hands back, so a `?api=` would let somebody send a
+ * link to the real page with a hostile watcher behind it. The page's own
+ * origin carries no such invitation: anyone who can change it already serves
+ * the page.
+ */
+function watcherOrigin() {
+  const { protocol, hostname } = window.location;
+
+  // Anything served over http is a local arrangement — the deployment is
+  // https — so the watcher is on the same host, on its own port.
+  if (protocol === 'http:') return `http://${hostname}:8787`;
+
+  return 'http://localhost:8787';
+}
+
 const CONFIG = {
   network: 'testnet',
 
@@ -39,7 +63,7 @@ const CONFIG = {
   // There is no hosted watcher yet, so this is a local one. A deployment that
   // means to complete transfers has to change both this and `connect-src` in
   // vercel.json.
-  api: 'http://localhost:8787',
+  api: watcherOrigin(),
 
   base: {
     chainIdHex: '0x14a34', // Base Sepolia

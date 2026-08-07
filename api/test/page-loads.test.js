@@ -38,7 +38,11 @@ function shimBrowser() {
     addEventListener() {},
     removeEventListener() {},
     dispatchEvent() {},
+    // The page reads this to work out where its watcher is, so a shim without
+    // it is a browser the page cannot run in.
+    location: { protocol: 'https:', hostname: 'example.test', search: '' },
   };
+  globalThis.location = globalThis.window.location;
   globalThis.document = {
     getElementById: () => element(),
     createElement: () => element(),
@@ -124,4 +128,21 @@ test('setStatus is only ever asked for a status it has', () => {
   for (const key of new Set(calls)) {
     assert.ok(known.has(key), `setStatus('${key}') names a status that does not exist`);
   }
+});
+
+/**
+ * The watcher's address comes from the page's own origin, never from the URL.
+ *
+ * This page signs whatever transaction that origin hands back, so a `?api=`
+ * override would let somebody send a link to the real page with a hostile
+ * watcher behind it and have a wallet asked to sign whatever it liked. The
+ * origin the page was served from carries no such invitation — anyone who can
+ * change it is already serving the page.
+ */
+test('the watcher address is never taken from the URL', () => {
+  const source = readFileSync(join(web, 'app.js'), 'utf8');
+
+  assert.doesNotMatch(source, /searchParams/, 'the page must not read its own query string');
+  assert.doesNotMatch(source, /location\.search/, 'the page must not read its own query string');
+  assert.match(source, /function watcherOrigin/, 'it is derived, and here is where');
 });
