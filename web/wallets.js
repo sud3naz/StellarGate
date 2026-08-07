@@ -57,17 +57,26 @@ export function discoverEvmWallets({ settle = 120 } = {}) {
  * that goes out of date.
  */
 const STELLAR_WALLETS = [
-  { id: 'freighter', name: 'Freighter', global: 'freighterApi' },
-  { id: 'xbull', name: 'xBull', global: 'xBullSDK' },
-  { id: 'rabet', name: 'Rabet', global: 'rabet' },
-  { id: 'lobstr', name: 'LOBSTR', global: 'lobstrApi' },
+  // Freighter is the odd one. It puts no object on the page at all — it sets
+  // `window.freighter` to true and speaks postMessage — so what answers here
+  // is its own library, vendored alongside this file. Detecting it by looking
+  // for `window.freighterApi` finds the library rather than the extension,
+  // which is how this page managed to report "no wallet found" to somebody
+  // who had one installed.
+  { id: 'freighter', name: 'Freighter', detect: () => window.freighter === true, api: () => window.freighterApi },
+  { id: 'xbull', name: 'xBull', detect: () => Boolean(window.xBullSDK), api: () => window.xBullSDK },
+  { id: 'rabet', name: 'Rabet', detect: () => Boolean(window.rabet), api: () => window.rabet },
+  { id: 'lobstr', name: 'LOBSTR', detect: () => Boolean(window.lobstrApi), api: () => window.lobstrApi },
 ];
 
 export function discoverStellarWallets() {
-  return STELLAR_WALLETS.filter((wallet) => window[wallet.global]).map((wallet) => ({
-    ...wallet,
-    api: window[wallet.global],
-  }));
+  return STELLAR_WALLETS.filter((wallet) => {
+    try {
+      return wallet.detect();
+    } catch {
+      return false;
+    }
+  }).map((wallet) => ({ id: wallet.id, name: wallet.name, api: wallet.api() }));
 }
 
 /**
@@ -81,9 +90,15 @@ export async function stellarAddress(wallet) {
   const api = wallet.api;
 
   if (wallet.id === 'freighter') {
-    if (api.setAllowed) await api.setAllowed();
-    const result = await (api.getAddress ? api.getAddress() : api.getPublicKey());
-    return typeof result === 'string' ? result : result.address;
+    // Its own library answers with `{ address, error }` rather than throwing,
+    // so an error read as an address would be a string nobody can spend to.
+    const asked = await api.requestAccess();
+    if (asked?.error) throw new Error(asked.error.message ?? String(asked.error));
+    if (asked?.address) return asked.address;
+
+    const result = await api.getAddress();
+    if (result?.error) throw new Error(result.error.message ?? String(result.error));
+    return result.address;
   }
   if (wallet.id === 'xbull') {
     await api.connect?.({ canRequestPublicKey: true, canRequestSign: true });
@@ -112,6 +127,7 @@ export async function signWithStellar(wallet, xdr, { networkPassphrase, address 
 
   if (wallet.id === 'freighter') {
     const signed = await api.signTransaction(xdr, { networkPassphrase, address });
+    if (signed?.error) throw new Error(signed.error.message ?? String(signed.error));
     return typeof signed === 'string' ? signed : signed.signedTxXdr;
   }
   if (wallet.id === 'xbull') {

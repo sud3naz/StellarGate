@@ -246,6 +246,15 @@ async function connectEvm() {
   const [account] = await provider.request({ method: 'eth_requestAccounts' });
   state.evmProvider = provider;
   state.evm = account;
+
+  // A wallet connected to some other chain answers `eth_call` from that chain,
+  // which is how "could not read your balance" happens to somebody whose
+  // balance is fine. Ask, and offer to move.
+  try {
+    await ensureChain(provider);
+  } catch (error) {
+    el.balance.textContent = String(error?.message ?? error);
+  }
   el.fromWho.textContent = `${account.slice(0, 6)}…${account.slice(-4)}`;
   el.fromWho.classList.remove('empty');
   el.connectEvm.textContent = `${picked.name} connected`;
@@ -253,6 +262,42 @@ async function connectEvm() {
 
   await readBalance();
   render();
+}
+
+/**
+ * Puts the wallet on the chain this page is talking about.
+ *
+ * `wallet_addEthereumChain` is the fallback rather than the opening move: a
+ * wallet that already knows Base Sepolia should not be asked to add it again,
+ * and a wallet that does not will refuse the switch with a code that says so.
+ */
+async function ensureChain(provider) {
+  const wanted = CONFIG.base.chainIdHex;
+  const current = await provider.request({ method: 'eth_chainId' });
+  if (current === wanted) return;
+
+  try {
+    await provider.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: wanted }],
+    });
+  } catch (error) {
+    // 4902: the wallet has never heard of it.
+    if (error?.code !== 4902) throw new Error('Switch your wallet to Base Sepolia to continue.');
+
+    await provider.request({
+      method: 'wallet_addEthereumChain',
+      params: [
+        {
+          chainId: wanted,
+          chainName: 'Base Sepolia',
+          nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
+          rpcUrls: ['https://sepolia.base.org'],
+          blockExplorerUrls: [CONFIG.base.explorer],
+        },
+      ],
+    });
+  }
 }
 
 async function readBalance() {
@@ -265,8 +310,12 @@ async function readBalance() {
     });
     state.balance = BigInt(result);
     el.balance.textContent = `${formatUsdc(state.balance)} USDC available on Base.`;
-  } catch {
-    el.balance.textContent = 'Could not read your USDC balance.';
+  } catch (error) {
+    // Saying only "could not" sends people looking at their balance, which is
+    // the one thing that is fine.
+    el.balance.textContent = `Could not read your USDC balance on Base Sepolia: ${
+      error?.message ?? error
+    }`;
   }
 }
 

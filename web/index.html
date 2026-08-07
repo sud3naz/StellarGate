@@ -386,6 +386,12 @@ footer a{color:var(--ink-soft)}
     <button class="cancel" id="sheetCancel" type="button">Cancel</button>
   </div>
 </div>
+<!-- Freighter's own API, vendored. The extension does not put an object on
+     the page — it sets `window.freighter` and talks over postMessage — so the
+     library is how you reach it, and a hand-rolled version of somebody else's
+     message protocol is a guess that breaks quietly. Apache-2.0, from
+     @stellar/freighter-api. -->
+<script src="freighter-api.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
