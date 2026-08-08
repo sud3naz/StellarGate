@@ -4,14 +4,13 @@
  * Two invariants carry the whole design, and both are easy to break by
  * accident once there is a UI, a queue and a retry loop in the way:
  *
- *   1. **The user's signature comes before the burn.** Not for convenience —
- *      because the setup transaction needs their key, and once they have
+ *   1. **The user's signature comes before the burn.** Not for convenience, *      because the setup transaction needs their key, and once they have
  *      burned on Base the money is committed. Collecting the signature after
  *      the burn creates a state where we hold their USDC and cannot deliver
  *      it because they closed the tab.
  *
  *   2. **No XLM leaves before a burn that paid for it.** Activation sends
- *      three XLM outright — spent, not lent, and unrecoverable. An endpoint
+ *      three XLM outright, spent, not lent, and unrecoverable. An endpoint
  *      that funds Stellar accounts on request costs three XLM per browser tab
  *      to drain. So funding is gated twice: on a completed burn, and on that
  *      burn having carried the activation fee.
@@ -118,7 +117,7 @@ export function advance(transfer, to) {
 
 /**
  * A delivery that failed because the destination was not ready yet. The CCTP
- * message survives, so this is a retry rather than a loss — but only if the
+ * message survives, so this is a retry rather than a loss, but only if the
  * provisioning is actually in place, otherwise it would spin forever.
  */
 export function retryable(failure) {

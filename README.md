@@ -1,7 +1,7 @@
 # stellar-bridge
 
 USDC from the EVM chains into Stellar, arriving in an account that already
-works. Not a cheaper bridge — a front door.
+works. Not a cheaper bridge, a front door.
 
 Deployed on Base Sepolia and proven end to end, in forty seconds, into an
 address that did not exist when the transfer started. Addresses and
@@ -21,7 +21,7 @@ user never had to hold XLM.
 
 **Everyone pays 0.5%. Only somebody who cannot hold USDC without our help pays
 more.** That costs five dollars and buys three XLM sent to the address
-outright — one for the account reserve, half for the trustline, and 1.5 left
+outright, one for the account reserve, half for the trustline, and 1.5 left
 over as the user's own fee money.
 
 The line is not "does an account exist". An address with no account cannot hold
@@ -32,7 +32,7 @@ problem, same three XLM, same fee. The only difference is the operation:
 
 **We do not make anybody a wallet.** The user makes their own in Freighter and
 holds their own key; nothing here generates or custodies one. A Stellar keypair
-is free and made offline — what does not exist until someone pays for it is the
+is free and made offline, what does not exist until someone pays for it is the
 *account on the ledger*, and that is the only thing the five dollars buys.
 
 Somebody withdrawing from an exchange has an account with XLM in it, pays their
@@ -77,8 +77,8 @@ the far side work is already in hand, so there is no state where their money is
 taken and cannot be delivered.
 
 What the browser is handed to sign is deliberately incomplete. The setup has
-to be built here — a page cannot know the channel account's sequence number,
-and has no business knowing the funder's address — but a setup that leaves
+to be built here, a page cannot know the channel account's sequence number,
+and has no business knowing the funder's address, but a setup that leaves
 this server already carrying the **funder's** signature is one the user can
 simply submit themselves: three XLM, no burn, once per request. That is the
 attack the ordering was meant to prevent, arriving by post instead. So the
@@ -90,7 +90,7 @@ The user still signs something they did not build, though, and that is worth
 one more thing. `web/envelope.js` decodes the setup before Freighter is asked
 for anything, and refuses it unless every operation drawn on the user's own
 account is a trustline for the USDC we named. A payment, a `setOptions` that
-hands the account over, a trustline for somebody else's USDC — all refused
+hands the account over, a trustline for somebody else's USDC, all refused
 with an explanation, before a wallet is opened. It fails closed: an operation
 type it does not recognise is a refusal, not a shrug.
 
@@ -101,7 +101,7 @@ this file is itself replaced then nothing here helps, and that threat belongs
 to Freighter and to whoever reads what it shows them.
 
 Funding only after a paid burn closes the obvious attack. The activation XLM is
-**spent, not lent** — unrecoverable — so an endpoint that creates accounts on
+**spent, not lent**, unrecoverable, so an endpoint that creates accounts on
 request costs three XLM per browser tab to drain. `flow.js` gates it twice: on
 a completed burn, and on that burn having carried the fee.
 
@@ -118,9 +118,9 @@ Hook layout, as Circle's forwarder parses it:
 
 | bytes | |
 |---|---|
-| 0–23 | `cctp-forward`, the marker that makes Circle relay the forward for us |
-| 24–27 | hook version, zero |
-| 28–31 | length of the strkey |
+| 0-23 | `cctp-forward`, the marker that makes Circle relay the forward for us |
+| 24-27 | hook version, zero |
+| 28-31 | length of the strkey |
 | 32+ | the strkey, UTF-8 |
 
 `forward_recipient` is parsed as a `MuxedAddress`, so `M…` works as well as
@@ -136,7 +136,7 @@ CRC16 before anything moves, and the fuzz test asserts that every possible
 single-character typo is caught.
 
 **A missing trustline is not fatal.** The forwarder finishes with a SAC
-transfer, which reverts if the recipient has no USDC trustline — and the
+transfer, which reverts if the recipient has no USDC trustline, and the
 message is not consumed, so `mint_and_forward` can simply be retried once the
 trustline exists. Being late costs nothing.
 
@@ -148,7 +148,7 @@ Stellar is widely taken to be standard-only. It is not.
 A burn at `minFinalityThreshold` 1000 was attested in **twenty-nine seconds**
 where hard finality took **twenty-five minutes**, and Stellar's
 `TokenMessengerMinter` accepted the unfinalized message through
-`handle_recv_unfinalized_message` — which the mainnet contract implements too,
+`handle_recv_unfinalized_message`, which the mainnet contract implements too,
 and which Circle's fee API prices at 1.3 basis points on both networks. The
 route sits unused, so it seems nobody had tried it.
 
@@ -158,7 +158,7 @@ the choice is not offered: every burn goes out fast.
 
 The wait that fast removes was doing work, though. The account setup used to
 go in during a fifteen-minute attestation, described here as free. It now goes
-in during a twenty-eight second one — measured at thirteen seconds for the
+in during a twenty-eight second one, measured at thirteen seconds for the
 setup against twenty-eight for the attestation, so **fifteen seconds of
 margin**. Submitting it promptly is not an optimisation any more.
 
@@ -166,22 +166,21 @@ margin**. Submitting it promptly is not an optimisation any more.
 
 The fee is applied at the *destination*: Circle writes `feeExecuted` into the
 burn message, bounded only by the `maxFee` sent from here. Nothing on the
-source chain can be asked what it will be — `getMinFeeAmount` reverts on
+source chain can be asked what it will be. `getMinFeeAmount` reverts on
 Base's messenger, which predates the setting, and reading a zero from it is
 what would break a fast transfer.
 
 So `maxFee` is granted rather than read: `circleFeeAllowanceBps`, twenty basis
 points, fifteen times what Circle has been observed to take. The asymmetry
-sets the direction. A ceiling too low does not save anyone money — it stalls
-transfers until an owner intervenes — while the cost of one too high is a
+sets the direction. A ceiling too low does not save anyone money. It stalls
+transfers until an owner intervenes, while the cost of one too high is a
 difference Circle has no reason to take, and would have to take visibly, from
 every integrator at once. It is adjustable for the same reason the activation
 fee is, and bounded by `MAX_CIRCLE_FEE_BPS` at 1%, which is not.
 
 Setting it too low is recoverable, which was worth knowing rather than
 assuming. A burn sent with `maxFee` of one unit sat for twenty minutes under
-`delayReason: insufficient_fee`, then attested at hard finality instead —
-`finalityThresholdExecuted` 2000 against the 1000 requested — and delivered in
+`delayReason: insufficient_fee`, then attested at hard finality instead, `finalityThresholdExecuted` 2000 against the 1000 requested, and delivered in
 full, with no fee at all. A wrong allowance costs speed, not money.
 
 Circle's contracts, from their reference:
@@ -265,7 +264,7 @@ shared wallet would be invalidated by the next transfer in that window.
 
 Both rules are enforced in `advance()`, and that turns out not to be enough.
 Driving the flow by hand during the testnet run, the burn was submitted before
-its `approve` had propagated and failed silently — and the setup went in
+its `approve` had propagated and failed silently, and the setup went in
 anyway, spending three XLM on an activation nobody had paid for. `advance()`
 refuses exactly that transition. It was never called: `submit()` is reachable
 without it.
@@ -273,7 +272,7 @@ without it.
 So the guard has to sit where the money leaves, not beside it. Whoever spends
 must **verify**, not be told: read the receipt from the source chain, find the
 `Bridged` log, check the recipient it names and the `activate` flag it carries,
-and take that as the proof — a value only obtainable by looking. A boolean can
+and take that as the proof, a value that is only obtainable by looking. A boolean can
 be wrong about a burn. A receipt cannot. Two smaller things travel with it: the
 burn must name *this* recipient, or one transfer funds another address; and a
 transaction hash must be spendable once, or one payment opens accounts forever.
@@ -282,7 +281,7 @@ That is now `verifyPaidBurn` in `watcher/burn.js`, and `submit()` asks for its
 result rather than for a flag. It also reads the transaction it is about to
 send: an XDR carrying a `createAccount` or a native payment spends our XLM and
 needs the proof, while a trustline on its own does not. The network passphrase
-is a required argument for that reason — submitting without being able to see
+is a required argument for that reason. Submitting without being able to see
 what is being submitted is the hole itself. The address filter is the security
 boundary in all this: `Bridged` is a signature anyone can emit, so a log from
 any contract but ours is somebody else's event.
@@ -304,10 +303,10 @@ is not gated behind a fee that user never owed.
   It is not knocked down: the decision was to deliver the USDC and stop there,
   so the outbound fee buys an interface rather than a far side that works.
   Claiming is still done for them, because `receiveMessage` is permissionless
-  but somebody has to call it — leaving that to a user with no ETH would mean
+  but somebody has to call it. Leaving that to a user with no ETH would mean
   not arriving at all rather than arriving without gas money.
 - The fee warning. A wallet asked to sign the setup judges affordability by
-  the account it is signing with, and that account is empty — the transaction
+  the account it is signing with, and that account is empty. The transaction
   is sourced from a channel account of ours and the fee comes from there. So
   Freighter says "insufficient funds for fee" to precisely the people this
   bridge exists for, and is wrong. The page says so before asking, which is a
@@ -321,7 +320,7 @@ is not gated behind a fee that user never owed.
   WalletConnect and needs a bundler this page does not have.
 - Concurrency. A channel account exists so that two transfers in flight
   cannot invalidate each other's sequence number, and every run so far has
-  been one at a time — so the reason the channel exists is the one thing it
+  been one at a time, which means the reason the channel exists is the one thing it
   has not been tested against. A pool of them is a config change; proving it
   needs two burns at once.
 - Muxed `M…` destinations. The contract validates them and the forwarder
@@ -332,7 +331,7 @@ is not gated behind a fee that user never owed.
 - Coverage for the two shapes `plan()` returns that testnet never exercised:
   `trustline`, and the `topup` that carries the argument this whole thing
   rests on. Also the `op_no_trust` retry, muxed `M…` addresses, and anything
-  concurrent — a channel account exists for concurrency, and one transfer at a
+  concurrent. A channel account exists for concurrency, and one transfer at a
   time never tested it.
 
 ## Open decisions
@@ -351,8 +350,8 @@ is not gated behind a fee that user never owed.
 - ~~**Whether Circle actually relays the forward.**~~ Settled, and the answer
   is **no**. Two attested messages were left alone to find out: the standard
   one for fourteen minutes, the fast one for four. Neither was delivered.
-  `mint_and_forward` is permissionless and costs **0.0075 XLM** — a quarter of
-  a cent — so this is an item on the watcher's list rather than a problem.
+  `mint_and_forward` is permissionless and costs **0.0075 XLM**, a quarter of
+  a cent, so this is an item on the watcher's list rather than a problem.
   There is no user-facing button for it either: a choice the user can get
   wrong is not a feature, and the promise is that USDC arrives ready to spend.
 - **How long a fast attestation stays valid.** Fast burn messages carry an
@@ -368,8 +367,7 @@ is not gated behind a fee that user never owed.
 ## Testing it from another machine
 
 The page and the watcher both bind every interface, so a second machine on the
-same network reaches them at this one's address rather than `localhost` —
-which over there means itself, and is empty.
+same network reaches them at this one's address rather than `localhost`, which over there means itself, and is empty.
 
 ```bash
 cd web && node serve.mjs        # the page, on 5173
@@ -397,8 +395,7 @@ BRIDGE_DELIVERY_SECRET=S… \
 npm run watcher
 ```
 
-`BRIDGE_DELIVERY_SECRET` is the account that pays for `mint_and_forward` —
-about 0.0075 XLM a call, and it never holds user funds. Everything else has a
+`BRIDGE_DELIVERY_SECRET` is the account that pays for `mint_and_forward`, about 0.0075 XLM a call, and it never holds user funds. Everything else has a
 testnet default: source RPC, Soroban RPC, Circle's API, the store's path, and
 the port. `BRIDGE_CURSOR` starts the log follower at a given block; without it
 the watcher begins at the tip and does not go looking for history.

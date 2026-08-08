@@ -80,7 +80,7 @@ test('a cursor replaces the starting ledger rather than joining it', async () =>
  * Asking with neither is refused here, not by the node.
  *
  * The node's answer is "startLedger must be positive", which describes a
- * malformed number and not the actual mistake — that nobody passed one. Six
+ * malformed number and not the actual mistake, that nobody passed one. Six
  * hundred lines of that went by unread.
  */
 test('asking with nowhere to start is refused before the node sees it', async () => {
@@ -219,7 +219,7 @@ test('a used nonce is finished', () => {
 
 /**
  * A message the transmitter will never accept is not worth an hour of
- * retries — it is worth telling somebody about.
+ * retries, it is worth telling somebody about.
  */
 test('a message the transmitter rejects outright asks for a person', () => {
   const verdict = classifyClaimFailure(new Error('execution reverted: Invalid attestation length'));

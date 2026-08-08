@@ -3,8 +3,8 @@
  *
  * The forwarder finishes a delivery with an ordinary SAC transfer, so an
  * account that does not exist, or exists without a USDC trustline, will make
- * that transfer fail. It fails cleanly — the CCTP message is not consumed and
- * the delivery can be retried — but the user is left waiting, so the point is
+ * that transfer fail. It fails cleanly, the CCTP message is not consumed and
+ * the delivery can be retried, but the user is left waiting, so the point is
  * to know what is missing before they ever burn anything.
  */
 
@@ -68,7 +68,7 @@ export async function inspect(horizon, address, asset, { amount = null, fetchImp
       reserveStroops: reserve,
       reserveXlm: formatStroops(reserve),
       // An existing account pays its own trustline reserve out of the XLM it
-      // already holds — but only if it holds enough. Whether it does decides
+      // already holds, but only if it holds enough. Whether it does decides
       // between "sign this" and "you are half an XLM short".
       spendableStroops: spendable,
       spendableXlm: formatStroops(spendable),
@@ -105,7 +105,7 @@ export async function inspect(horizon, address, asset, { amount = null, fetchImp
  *
  * Not the native balance: an account must keep two base reserves for itself
  * and one for every subentry it holds, plus whatever it has committed to sell.
- * Sponsorship shifts the burden — reserves an account sponsors for others
+ * Sponsorship shifts the burden, reserves an account sponsors for others
  * count against it, and reserves sponsored on its behalf do not.
  */
 export function spendableStroops(account, reserve) {

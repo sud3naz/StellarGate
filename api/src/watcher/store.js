@@ -1,9 +1,8 @@
 /**
  * What the watcher remembers, and the one thing it must never forget.
  *
- * A burn pays for one activation. If the same burn can be presented twice —
- * because a retry looked like a new transfer, or because the process restarted
- * and forgot — then three XLM go out again for money that was only paid once,
+ * A burn pays for one activation. If the same burn can be presented twice, * because a retry looked like a new transfer, or because the process restarted
+ * and forgot, then three XLM go out again for money that was only paid once,
  * and the endpoint that funds Stellar accounts is free to whoever loops it.
  * That is the same attack `flow.js` describes, arriving through the back door.
  *
@@ -24,7 +23,7 @@ export class DoublePayment extends Error {}
 export class Store {
   /**
    * @param path Where to persist. Omit for a store that lives and dies with
-   *        the process — fine for tests, not for anything that sends XLM.
+   *        the process, fine for tests, not for anything that sends XLM.
    */
   constructor({ path = null } = {}) {
     this.path = path;
@@ -38,7 +37,7 @@ export class Store {
   /**
    * @dev Written to a neighbouring file and renamed, because a process killed
    * mid-write would otherwise leave a truncated record of what has been paid
-   * for — and a store that cannot be read is a store that funds everything
+   * for, and a store that cannot be read is a store that funds everything
    * twice.
    */
   #persist() {
@@ -49,8 +48,7 @@ export class Store {
   }
 
   /**
-   * Records a transfer the first time it is seen. Seeing it again is normal —
-   * logs get re-read after a restart — and must not disturb what is already
+   * Records a transfer the first time it is seen. Seeing it again is normal, * logs get re-read after a restart, and must not disturb what is already
    * known about it.
    */
   remember({ txHash, recipient, setupXdr = null, direction = 'in' }) {
@@ -96,7 +94,7 @@ export class Store {
    * Takes the right to spend XLM against this burn, once.
    *
    * @returns true if the caller now holds that right, false if somebody
-   *          already did. A false is not an error — a retry landing on an
+   *          already did. A false is not an error, a retry landing on an
    *          activation that already happened is the ordinary case.
    */
   claimActivation(txHash) {

@@ -108,7 +108,7 @@ test('no XLM leaves for an activation nobody paid for', () => {
 
 /**
  * The gate is on the XLM, not on whether an account exists. An account holding
- * 1.2 XLM exists and still cannot afford a trustline, so it gets funded — and
+ * 1.2 XLM exists and still cannot afford a trustline, so it gets funded, and
  * therefore has to have paid, exactly like an address with no account at all.
  */
 test('a top-up is gated the same way a creation is', () => {

@@ -20,8 +20,8 @@ function iris(body, status = 200) {
 
 /**
  * Shapes taken from Circle's sandbox on 7 August 2026 rather than from the
- * documentation, because the fields that mattered most — `delayReason`, and
- * `finalityThresholdExecuted` disagreeing with what was requested — are not
+ * documentation, because the fields that mattered most, `delayReason`, and
+ * `finalityThresholdExecuted` disagreeing with what was requested, are not
  * the ones the docs lead with.
  */
 const PENDING = {
@@ -127,7 +127,7 @@ test('a ready attestation is not polled again', () => {
 
 /**
  * Hard finality took twenty-five minutes on testnet, so the give-up point has
- * to be well past that — a loop that stops at twenty minutes stops on the
+ * to be well past that, a loop that stops at twenty minutes stops on the
  * ordinary case.
  */
 test('waiting continues well past the hard-finality window', () => {

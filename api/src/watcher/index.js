@@ -2,7 +2,7 @@
  * The loop, as one function that moves a transfer forward by one step.
  *
  * All of the ordering lives in {step}, and the timer around it does nothing
- * but call it — because the ordering is the part that can lose money, and a
+ * but call it, because the ordering is the part that can lose money, and a
  * rule tangled into a scheduler cannot be tested. `flow.js` says what the
  * order is; this is where it actually happens.
  *
@@ -31,7 +31,7 @@ import { reverseStep } from './reverse.js';
  * against nothing at all, and every branch that spends money is reachable in
  * a test.
  *
- * @returns `{ action, reason?, hash? }` — what it did, for a log a human can
+ * @returns `{ action, reason?, hash? }`, what it did, for a log a human can
  *          read at three in the morning.
  */
 export async function step(transfer, deps) {
@@ -55,8 +55,8 @@ export async function step(transfer, deps) {
     if (proof.activate) {
       const ours = store.claimActivation(transfer.txHash);
       if (!ours) {
-        // Somebody already spent against this burn. Not an error — a retry
-        // arriving after the work was done — but it must not spend again.
+        // Somebody already spent against this burn. Not an error, a retry
+        // arriving after the work was done, but it must not spend again.
         store.markProvisioned(transfer.txHash);
         return { action: 'wait', state: STATES.PROVISIONED, reason: 'already provisioned' };
       }

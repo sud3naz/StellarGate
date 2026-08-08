@@ -48,7 +48,7 @@ export async function run({
 
   // Soroban has no "from wherever you are". `getEvents` refuses a request that
   // names neither a cursor nor a ledger, so the outbound follower needs the
-  // same default the inbound one takes from `latestBlock` above — and without
+  // same default the inbound one takes from `latestBlock` above, and without
   // it every single poll failed, quietly, into the retry log, and no burn
   // leaving Stellar was ever seen. Clamped to what the node still keeps,
   // because a start it has forgotten is refused exactly as silently.
@@ -71,7 +71,7 @@ export async function run({
           fetchImpl,
           onBurn: async (burn) => {
             // The log is enough to know a transfer exists and who it is for.
-            // It is not enough to provision one — that needs the setup XDR
+            // It is not enough to provision one, that needs the setup XDR
             // from the browser, and the proof from `verifyPaidBurn` at the
             // moment the XLM would move.
             store.remember({ txHash: burn.txHash, recipient: burn.stellarRecipient });

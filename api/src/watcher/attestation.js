@@ -8,8 +8,8 @@
  *
  * **`insufficient_fee` is not a failure.** A burn sent with a `maxFee` too
  * small for a fast transfer sat under that reason for twenty minutes and then
- * attested at hard finality instead — `finalityThresholdExecuted` came back
- * 2000 against the 1000 asked for — and delivered in full, with no fee at all.
+ * attested at hard finality instead, `finalityThresholdExecuted` came back
+ * 2000 against the 1000 asked for, and delivered in full, with no fee at all.
  * A watcher that gives up on that reason abandons money that was going to
  * arrive. What it should do is stop expecting it in thirty seconds.
  *
@@ -29,7 +29,7 @@ export const IRIS = {
  * @param api          Base URL, from {IRIS}.
  * @param sourceDomain CCTP domain the burn happened on. Base is 6.
  * @param txHash       The burn transaction.
- * @returns `null` when Circle has no record of it yet — a burn that has not
+ * @returns `null` when Circle has no record of it yet, a burn that has not
  *          been indexed is not a burn that failed.
  */
 export async function fetchAttestation(api, sourceDomain, txHash, { fetchImpl = fetch } = {}) {
@@ -88,8 +88,8 @@ export function nextPollSeconds(attestation, { elapsedSeconds = 0 } = {}) {
  * Whether to keep waiting at all.
  *
  * Deliberately generous: the only thing here that is genuinely lost is a burn
- * Circle refuses outright, and none has been seen. Everything else — pending,
- * an insufficient fee, an unindexed transaction — arrives eventually. Giving
+ * Circle refuses outright, and none has been seen. Everything else, pending,
+ * an insufficient fee, an unindexed transaction, arrives eventually. Giving
  * up early means a user's USDC sits burned while nobody is watching.
  */
 export function stillWorthWaiting(attestation, { elapsedSeconds }) {

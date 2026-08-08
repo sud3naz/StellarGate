@@ -3,7 +3,7 @@
  *
  * This exists because the guard that was supposed to prevent the mistake was
  * not on the path. `flow.js` refuses to provision a transfer that has not
- * paid — but it refuses in `advance()`, and `submit()` is reachable without
+ * paid, but it refuses in `advance()`, and `submit()` is reachable without
  * ever calling it. During the testnet run a burn failed silently, the setup
  * went in regardless, and three XLM left for an activation nobody had bought.
  *
@@ -24,7 +24,7 @@
  *      replayed against every address somebody cares to ask about.
  *
  * Replay of the same burn against the *same* address is not this module's
- * job — that needs a store, and it belongs there.
+ * job, that needs a store, and it belongs there.
  */
 
 /// keccak256("Bridged(address,string,uint256,uint256,uint256,uint8,bool)")
@@ -148,8 +148,7 @@ export async function verifyPaidBurn(
  * Kept separate from {verifyPaidBurn} because the questions are different: one
  * asks whether a burn happened, this asks whether it bought this particular
  * thing. Adding a trustline to an account that can pay its own reserve costs a
- * transaction fee and nothing else, so it is deliberately not gated here —
- * charging for it would be charging a user who never owed anything.
+ * transaction fee and nothing else, so it is deliberately not gated here, * charging for it would be charging a user who never owed anything.
  */
 export function assertPaidForActivation(proof) {
   if (!proof?.txHash) {

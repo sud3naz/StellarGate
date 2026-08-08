@@ -73,8 +73,8 @@ test('an address with no account gets an activation', async () => {
 
 /**
  * The distinctive one. An account that exists but cannot afford its own
- * trustline reserve is in the same position as one that does not exist — it
- * cannot hold USDC and cannot fix that — so it gets the same three XLM and
+ * trustline reserve is in the same position as one that does not exist, it
+ * cannot hold USDC and cannot fix that, so it gets the same three XLM and
  * pays the same fee. Only the operation differs.
  */
 test('an account too poor for its own trustline is topped up, not left', async () => {

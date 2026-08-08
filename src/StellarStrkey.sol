@@ -99,9 +99,9 @@ library StellarStrkey {
             uint256 value;
             uint8 c = uint8(input[i]);
             if (c >= 0x41 && c <= 0x5A) {
-                value = c - 0x41; // 'A'–'Z' -> 0–25
+                value = c - 0x41; // 'A'-'Z' -> 0-25
             } else if (c >= 0x32 && c <= 0x37) {
-                value = c - 0x32 + 26; // '2'–'7' -> 26–31
+                value = c - 0x32 + 26; // '2'-'7' -> 26-31
             } else {
                 revert BadCharacter(i);
             }

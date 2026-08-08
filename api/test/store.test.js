@@ -70,7 +70,7 @@ test('a setup arriving later is filled in', () => {
 
 /**
  * A claim held only in memory is not a claim. If the process can restart and
- * forget what it has already paid for, the loop above works — it just needs a
+ * forget what it has already paid for, the loop above works, it just needs a
  * crash between iterations.
  */
 test('a claim survives the process that made it', () => {

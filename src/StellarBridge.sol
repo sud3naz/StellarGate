@@ -32,7 +32,7 @@ interface ITokenMessengerV2 {
  * Stellar is CCTP domain 27 and, unlike the EVM chains, it will not take a
  * plain account as the mint recipient: CCTP treats `mintRecipient` as a
  * contract address there. Paying an ordinary `G…` account therefore goes
- * through Circle's own CctpForwarder — the burn mints to the forwarder, and
+ * through Circle's own CctpForwarder, the burn mints to the forwarder, and
  * the forwarder pays the address carried in the hook data. So the recipient
  * travels as text, not as a 32-byte word, and this contract has to use
  * `depositForBurnWithHook` rather than the plain call.
@@ -51,7 +51,7 @@ interface ITokenMessengerV2 {
  *    trustline is in place. Nothing is lost by being late.
  *
  * Every burn goes out at soft finality. Stellar is widely taken not to support
- * Fast Transfer — this contract shipped believing it — and the chain says
+ * Fast Transfer, this contract shipped believing it, and the chain says
  * otherwise: the same transfer attests in twenty-nine seconds rather than
  * twenty-five minutes, for 1.3 basis points. There is no version of this rail
  * worth running at the slower speed, so the choice is not offered. What Circle
@@ -80,8 +80,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      * The fee below it moves because its cost is denominated in XLM while the
      * fee is denominated in USDC, and those drift apart. This bounds that
      * drift at four times the starting price. Past it the answer is to send
-     * less XLM — three is generous, and about 1.6 is the functional minimum —
-     * not to charge more.
+     * less XLM, three is generous, and about 1.6 is the functional minimum, * not to charge more.
      */
     uint256 public constant ACTIVATION_FEE_CEILING = 20e6; // 20 USDC
 
@@ -94,7 +93,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      * @notice Soft finality, which is to say Fast Transfer.
      *
      * Stellar does support it. Circle's documentation is read as saying
-     * otherwise and the route sits unused, so this went untested — but the
+     * otherwise and the route sits unused, so this went untested, but the
      * chain disagrees with the reading. Burning at this threshold on Base
      * Sepolia was attested in **29 seconds** against **25 minutes** for hard
      * finality, and Stellar's TokenMessengerMinter took the unfinalized
@@ -156,10 +155,10 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      * Worth being precise about what this does and does not do. The user makes
      * their own wallet, in Freighter, and holds their own key; nothing here
      * generates or custodies one. On Stellar a keypair costs nothing and is
-     * created offline — but the address does not exist on the ledger until
+     * created offline, but the address does not exist on the ledger until
      * somebody funds it, and that is the only thing being bought. Sponsored
      * reserves were the alternative and would have cost less, since
-     * sponsorship locks capital rather than spending it — but a sponsored
+     * sponsorship locks capital rather than spending it, but a sponsored
      * account holds zero XLM, and an account with zero XLM cannot pay a
      * transaction fee. It could receive USDC and then be unable to send it
      * anywhere without us signing for every move.
@@ -179,21 +178,21 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      * @notice What Circle is authorised to take out of a burn, in basis
      * points of the amount sent.
      *
-     * Not a price we are quoted — an allowance we grant. On a fast transfer
+     * Not a price we are quoted, an allowance we grant. On a fast transfer
      * the fee is applied at the *destination*, written into the message as
      * `feeExecuted` and bounded only by the `maxFee` sent from here. Circle
      * fills that number in, so whatever is set here is what they may take.
      * Observed behaviour is that they take exactly their published minimum
      * (1.3 bps, to the unit), and taking more would be visible on-chain to
-     * every integrator at once — but it is an allowance, and worth reading as
+     * every integrator at once, but it is an allowance, and worth reading as
      * one.
      *
      * Twenty basis points is fifteen times the current fee. The asymmetry is
      * the reason for the headroom: setting it too low does not save anyone
      * money, it fails transfers until an owner intervenes, whereas the cost of
      * setting it high is a difference Circle has no reason to take. Adjustable
-     * for the same reason {activationFee} is — Circle's number can move and a
-     * redeploy is a poor way to find out — and bounded by
+     * for the same reason {activationFee} is, Circle's number can move and a
+     * redeploy is a poor way to find out, and bounded by
      * {MAX_CIRCLE_FEE_BPS}, which cannot move at all.
      */
     uint256 public circleFeeAllowanceBps = 20;
@@ -224,7 +223,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      *        pays {activationFee} and the Stellar side sends the XLM. Setting
      *        it for an account that already exists only overpays, and setting
      *        it falsely for one that does not means the transfer arrives with
-     *        nowhere to land — recoverable, since the delivery can be retried
+     *        nowhere to land, recoverable, since the delivery can be retried
      *        once the account exists, but the user has to sort that out.
      * @param acceptedActivationFee The activation price the caller agreed to,
      *        as quoted. Ignored when `activate` is false. This is what stops a
@@ -254,7 +253,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
 
         // What Circle may take, not what they have asked for. On a fast
         // transfer the fee lands at the destination, and the source accepts
-        // any ceiling at all — including one too small to cover it. So this is
+        // any ceiling at all, including one too small to cover it. So this is
         // granted rather than read, and {circleFeeAllowanceBps} is set with
         // enough headroom that Circle never runs into it.
         uint256 circleFee = circleFeeAllowance(net);
@@ -331,7 +330,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
     /**
      * @notice The ceiling authorised to Circle for a burn of `net`.
      *
-     * @dev Not what they will take — what they may. The fee is applied at the
+     * @dev Not what they will take, what they may. The fee is applied at the
      * destination and only becomes a number when Circle writes `feeExecuted`
      * into the message, so nothing on this chain can be asked. Observed: 1.3
      * basis points, which is their published minimum, against the twenty this
@@ -347,8 +346,8 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      * way to learn that. Bounded by {MAX_CIRCLE_FEE_BPS}, which cannot move.
      *
      * Lowering this is the dangerous direction. A ceiling too small does not
-     * fail at the burn — the source accepts any `maxFee`, including one that
-     * cannot cover the fee — so the money is already committed by the time it
+     * fail at the burn, the source accepts any `maxFee`, including one that
+     * cannot cover the fee, so the money is already committed by the time it
      * matters.
      */
     function setCircleFeeAllowance(uint256 bps) external onlyOwner {
@@ -368,9 +367,9 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
     /**
      * @dev The layout Circle's forwarder parses:
      *
-     *     bytes  0–23  magic, or zero to opt out of Circle relaying the forward
-     *     bytes 24–27  hook version, zero
-     *     bytes 28–31  length of the strkey that follows
+     *     bytes  0-23  magic, or zero to opt out of Circle relaying the forward
+     *     bytes 24-27  hook version, zero
+     *     bytes 28-31  length of the strkey that follows
      *     bytes 32+    the strkey, UTF-8
      */
     function _hookData(string calldata stellarRecipient) private pure returns (bytes memory) {

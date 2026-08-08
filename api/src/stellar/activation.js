@@ -10,7 +10,7 @@ import { assertPaidForActivation } from '../watcher/burn.js';
  * **The address has no account.** We buy it one: three XLM sent outright, plus
  * the trustline in the same transaction. One XLM is the account reserve, half
  * an XLM the trustline reserve, and the rest is the user's own fee money. That
- * last part is the reason this is a payment and not a sponsorship — a sponsored
+ * last part is the reason this is a payment and not a sponsorship, a sponsored
  * account holds zero XLM, and an account holding zero XLM cannot pay a
  * transaction fee, so it could receive USDC and then be unable to send it
  * anywhere without us signing for every move. Three XLM buys independence.
@@ -56,7 +56,7 @@ export function buildActivation({
 }
 
 /**
- * An account that exists but cannot cover its own trustline reserve — a
+ * An account that exists but cannot cover its own trustline reserve, a
  * balance somewhere between one XLM and one and a half. It gets the same three
  * XLM and pays the same fee as an address with no account at all, because from
  * the user's side the situation is identical: they cannot hold USDC and cannot
@@ -146,7 +146,7 @@ export function plan(inspection, { reserveStroops }) {
  *
  * Creating an account and topping one up both send XLM outright. Adding a
  * trustline to an account that can pay its own reserve costs a transaction fee
- * and nothing more, and is deliberately not in this list — gating it would be
+ * and nothing more, and is deliberately not in this list, gating it would be
  * charging a user who never owed anything.
  */
 export function spendsOurXlm(signedXdr, networkPassphrase) {
@@ -160,14 +160,13 @@ export function spendsOurXlm(signedXdr, networkPassphrase) {
  * Submits a setup that was signed earlier, adding the last signature it needs.
  *
  * @param paidBurn A proof from {verifyPaidBurn}, required when the transaction
- *        sends XLM. Not a flag — a value that can only be got by reading the
+ *        sends XLM. Not a flag, a value that can only be got by reading the
  *        burn receipt off the source chain.
  * @param funderSigner The keypair whose XLM is being sent. Signs **here**,
  *        after the proof, and never before.
  *
- * That last part is the whole shape of it. The setup has to be built by us —
- * the browser cannot know the channel's sequence number or the funder's
- * address — and it has to be signed by the user before the burn, because
+ * That last part is the whole shape of it. The setup has to be built by us, * the browser cannot know the channel's sequence number or the funder's
+ * address, and it has to be signed by the user before the burn, because
  * afterwards they may be gone. But a transaction that leaves here already
  * carrying the funder's signature is a transaction the user can simply submit
  * themselves: three XLM, no burn, once per request. That is the attack the

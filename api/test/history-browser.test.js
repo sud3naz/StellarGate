@@ -44,7 +44,7 @@ test('the newest is first, because that is the one being waited on', async () =>
   );
 });
 
-/// A retry, a refresh, a second click — the same burn is one transfer.
+/// A retry, a refresh, a second click, the same burn is one transfer.
 test('recording the same burn twice leaves one row', async () => {
   const h = await load();
   h.remember(burn('0xaaa', { amount: '5.00' }));

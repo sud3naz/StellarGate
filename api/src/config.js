@@ -3,7 +3,7 @@ import { Asset, Networks } from '@stellar/stellar-sdk';
 /**
  * Both issuers were checked against Horizon rather than copied from a post:
  * the mainnet one answers with home_domain circle.com, the testnet one with
- * centre.io, and neither sets auth_required — so a trustline is usable the
+ * centre.io, and neither sets auth_required, so a trustline is usable the
  * moment it exists, with no authorisation step to wait on.
  */
 export const USDC = {
@@ -36,7 +36,7 @@ export const CFG = {
 
   /**
    * What a new account is given. One XLM is its own reserve, half an XLM the
-   * USDC trustline's, and the remaining 1.5 is the user's fee money — roughly
+   * USDC trustline's, and the remaining 1.5 is the user's fee money, roughly
    * 150,000 operations at the 100-stroop base fee. Without that last part the
    * account could receive USDC and be unable to send it anywhere.
    *
@@ -58,7 +58,7 @@ export const CFG = {
 
   /**
    * How long a signed setup stays valid. Stellar has no Fast Transfer, so the
-   * burn waits on Base hard finality — minutes, not seconds. This is that
+   * burn waits on Base hard finality, minutes, not seconds. This is that
    * window with room to spare; a transaction that expires is a user who signed
    * for nothing.
    */

@@ -2,8 +2,7 @@
  * Stellar addresses in the browser, checked the same way the contract checks
  * them: base32, then the CRC16 the strkey carries.
  *
- * This is the copy that can be bypassed — the one in {StellarStrkey} is not —
- * but it is the one that stops a typo before the user has signed anything, so
+ * This is the copy that can be bypassed, the one in {StellarStrkey} is not, * but it is the one that stops a typo before the user has signed anything, so
  * it has to agree with the contract exactly. The tests run both against the
  * same vectors.
  */

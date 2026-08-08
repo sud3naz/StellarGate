@@ -6,8 +6,8 @@
  * before it can be submitted. So the server builds it and the user signs it.
  *
  * The difference is who pays. Going out, the user is the source of their own
- * transaction — they hold USDC on Stellar, so they hold XLM for the reserve
- * that lets them hold it — and nothing of ours is at stake. There is no
+ * transaction, they hold USDC on Stellar, so they hold XLM for the reserve
+ * that lets them hold it, and nothing of ours is at stake. There is no
  * funder signature waiting on the far side of a burn, because the burn is the
  * thing being signed.
  */

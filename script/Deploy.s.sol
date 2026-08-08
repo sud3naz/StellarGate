@@ -14,7 +14,7 @@ import {StellarBridge} from "../src/StellarBridge.sol";
  * the point rather than an inconvenience: a script that falls back to a
  * sensible-looking address is a script that will eventually deploy a bridge
  * whose fees go somewhere nobody chose. The forwarder in particular is a raw
- * 32-byte contract id and looks like any other word — getting it wrong sends
+ * 32-byte contract id and looks like any other word, getting it wrong sends
  * every burn to an address that will never mint.
  *
  * It also checks the pieces answer before writing anything down, because a

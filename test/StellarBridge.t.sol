@@ -361,7 +361,7 @@ contract StellarBridgeTest is Test {
     }
 
     /// @dev Circle raises their fee past the current allowance. The answer is
-    /// a setter call, not a redeploy — which is the whole reason this is not a
+    /// a setter call, not a redeploy, which is the whole reason this is not a
     /// constant.
     function test_allowanceMovesWithoutARedeploy() public {
         vm.prank(owner);

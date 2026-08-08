@@ -7,8 +7,7 @@
  * this: the page asks, every wallet answers with its own name, icon and
  * provider, and the choice belongs to the person making it.
  *
- * The Stellar side has no such standard, so it is done the honest way round —
- * a short list of the globals known wallets inject, checked for. A wallet not
+ * The Stellar side has no such standard, so it is done the honest way round, * a short list of the globals known wallets inject, checked for. A wallet not
  * on that list is missed, which is a reason to keep the list current and not a
  * reason to pretend `window.freighterApi` is the only way to hold XLM.
  */
@@ -62,8 +61,8 @@ export function discoverEvmWallets({ settle = 120 } = {}) {
  * One, for now, and that is the point rather than an embarrassment. An earlier
  * version of this file listed four, written from memory: xBull as
  * `window.xBullSDK`, LOBSTR as `window.lobstrApi`, Freighter as
- * `window.freighterApi`. Checked against Stellar Wallets Kit — the maintained
- * multi-wallet connector, which is where the real answers are — three of the
+ * `window.freighterApi`. Checked against Stellar Wallets Kit, the maintained
+ * multi-wallet connector, which is where the real answers are, three of the
  * four were wrong. xBull is an iframe bridge from
  * `@creit.tech/xbull-wallet-connect`, LOBSTR is
  * `@lobstrco/signer-extension-api`, and Freighter puts nothing on the page at
@@ -71,7 +70,7 @@ export function discoverEvmWallets({ settle = 120 } = {}) {
  * extension injects late enough that a synchronous check misses it.
  *
  * A wallet listed and wrong is worse than one not listed. It offers itself,
- * takes the click, and fails somewhere the user cannot read — which is exactly
+ * takes the click, and fails somewhere the user cannot read, which is exactly
  * what "no Stellar wallet found" meant to somebody who had Freighter
  * installed. So the guesses are gone.
  *
@@ -85,7 +84,7 @@ const STELLAR_WALLETS = [
     name: 'Freighter',
     // Asked, not guessed at. `isConnected()` checks `window.freighter` and,
     // when that is absent, falls back to a postMessage round-trip to the
-    // extension — so requiring the global finds only the versions that happen
+    // extension, so requiring the global finds only the versions that happen
     // to set one. That was the second wrong answer this page gave somebody
     // with Freighter installed.
     detect: async () => {

@@ -3,14 +3,14 @@
  *
  * Nobody does this for us. Two attested messages were left alone during the
  * testnet run to find out whether Circle's own relayer would execute the
- * forward — the standard one for fourteen minutes, the fast one for four — and
+ * forward, the standard one for fourteen minutes, the fast one for four, and
  * neither arrived. The call is permissionless and costs about 0.0075 XLM, so
  * this is a line on the watcher's list rather than a problem, but it is not
  * optional and there is no user-facing button for it either.
  *
  * The important property is that being late is free. `mint_and_forward` ends
  * in a token transfer that fails if the recipient has no USDC trustline, and a
- * failure there does **not** consume the CCTP message — so the same message
+ * failure there does **not** consume the CCTP message, so the same message
  * can be presented again once the trustline exists. That is why almost every
  * failure here is worth retrying, and why the dangerous mistake would be to
  * mark a transfer dead on the first refusal.
@@ -27,7 +27,7 @@ export const FORWARDER = {
 /**
  * Contract error codes, read off the deployed contracts' own error enums
  * rather than guessed from the names. Soroban reports these as
- * `Error(Contract, #6908)` and nothing else — there is no text to match on,
+ * `Error(Contract, #6908)` and nothing else, there is no text to match on,
  * which is how the first version of this function came to be wrong: it
  * searched for words like "already used" and read a consumed message as
  * something worth retrying forever.
@@ -62,12 +62,11 @@ function contractErrorCode(text) {
  * Two exceptions, in opposite directions. A consumed nonce means an earlier
  * attempt already landed and there is nothing left to do. A malformed message
  * will fail identically forever, so retrying is just a slower way of not
- * telling anyone — it needs a person, and says so.
+ * telling anyone, it needs a person, and says so.
  *
  * @dev A missing trustline was the one worth checking rather than assuming,
  * and it behaves as the design claims. Delivering into a funded account with
- * no USDC line failed at simulation with a message naming the trustline —
- * matched below, and from the token contract rather than either enum here.
+ * no USDC line failed at simulation with a message naming the trustline, * matched below, and from the token contract rather than either enum here.
  * Adding the line and presenting the *same* message again delivered in full:
  * a failure consumes nothing, so being late really does cost nothing.
  */
@@ -133,7 +132,7 @@ export async function deliver({
       .build();
 
     // Simulates and fills in the resource footprint. Throws on a simulation
-    // failure, which is where a missing trustline surfaces — before anything
+    // failure, which is where a missing trustline surfaces, before anything
     // has been submitted or paid for.
     const prepared = await server.prepareTransaction(built);
     prepared.sign(signer);

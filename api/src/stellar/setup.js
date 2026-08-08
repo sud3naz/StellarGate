@@ -5,8 +5,8 @@
  * user's signature being collected: the channel account's sequence number and
  * the funder's address are both ours, and neither belongs in a browser.
  *
- * What goes back is deliberately incomplete. The channel signs — it owns the
- * sequence — and the funder does not, because a transaction carrying the
+ * What goes back is deliberately incomplete. The channel signs, it owns the
+ * sequence, and the funder does not, because a transaction carrying the
  * funder's signature is one the user can submit themselves for three XLM and
  * no burn. The signature that makes `createAccount` work is added in
  * {submit}, after the burn has been read off the source chain.
@@ -64,7 +64,7 @@ export async function buildSetupFor(
     tx = buildActivation({ ...shared, funder: funderAddress, startingBalance: startingXlm });
   } else if (decision.kind === 'topup') {
     // An account that exists but cannot afford its own trustline reserve. Same
-    // three XLM, same fee, different operation — from the user's side the
+    // three XLM, same fee, different operation, from the user's side the
     // situation is identical, which is the whole argument for the fee being
     // shaped this way.
     tx = buildTopUp({ ...shared, funder: funderAddress, amount: startingXlm });

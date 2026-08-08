@@ -3,13 +3,13 @@
  *
  * Kept here rather than asked for. The watcher knows every transfer it has
  * ever handled, so a "list them" endpoint would be one request away from
- * showing everybody's to anybody — and a bridge's history is a list of who
+ * showing everybody's to anybody, and a bridge's history is a list of who
  * paid whom. Recording locally means "my transfers" is exactly the set this
  * browser started, with no question of whose is whose.
  *
  * The cost is honest and worth stating: clear the browser and the list goes.
  * Nothing is lost by it. The money moved on two chains that remember perfectly
- * well, and every row here carries the hashes to prove it — this is a
+ * well, and every row here carries the hashes to prove it, this is a
  * convenience, not a ledger.
  */
 

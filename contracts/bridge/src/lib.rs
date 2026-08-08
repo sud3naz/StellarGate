@@ -3,9 +3,9 @@
 //! The other direction: USDC out of Stellar and into an EVM chain.
 //!
 //! The mirror of `StellarBridge.sol`, and deliberately a smaller thing. Going
-//! the other way the destination needs nothing built for it — an EVM address
+//! the other way the destination needs nothing built for it, an EVM address
 //! exists whether anybody has heard of it or not, there is no trustline to
-//! add and no reserve to buy — so the elaborate part of this bridge has no
+//! add and no reserve to buy, so the elaborate part of this bridge has no
 //! counterpart here. What is left is a fee, a check on the address, and the
 //! burn.
 //!
@@ -33,7 +33,7 @@ pub const BPS_DENOM: i128 = 10_000;
 /// Base's CCTP domain.
 pub const DEFAULT_DESTINATION_DOMAIN: u32 = 6;
 
-/// Soft finality — Circle's fast transfer. The forward direction found that
+/// Soft finality, Circle's fast transfer. The forward direction found that
 /// Stellar takes these despite the documentation reading otherwise; there was
 /// never any doubt about the EVM chains.
 pub const FINALITY_FAST: u32 = 1000;
@@ -64,8 +64,8 @@ pub enum Error {
     NothingAccrued = 6,
 }
 
-/// What the watcher follows. There is no receipt to read on this side — no
-/// log a node will hand back for a transaction — so a burn is only knowable
+/// What the watcher follows. There is no receipt to read on this side, no
+/// log a node will hand back for a transaction, so a burn is only knowable
 /// through what the contract chose to say about it. `from` and `recipient`
 /// are topics so it can be found without reading every event on the network.
 #[contractevent(topics = ["bridged"])]
@@ -92,7 +92,7 @@ pub enum Key {
 pub struct Config {
     pub owner: Address,
     pub treasury: Address,
-    /// The USDC contract on this network — the SAC, not the classic asset.
+    /// The USDC contract on this network, the SAC, not the classic asset.
     pub usdc: Address,
     /// Circle's TokenMessengerMinter.
     pub messenger: Address,
@@ -177,7 +177,7 @@ impl ReverseBridge {
         env.storage().instance().set(&Key::Accrued, &(accrued + fee));
 
         // Circle's messenger takes the tokens with `transfer_from`, not
-        // `transfer` — the same approve-then-pull shape as the EVM side — so
+        // `transfer`, the same approve-then-pull shape as the EVM side, so
         // what it needs is an allowance rather than permission to be called.
         // Authorising a `transfer` sub-invocation instead looks correct, runs
         // correctly against a mock that pulls the other way, and fails on

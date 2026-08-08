@@ -36,7 +36,7 @@ test('a new account is bought outright and given its trustline in one go', () =>
 
 /**
  * The reason this is a payment and not a sponsorship. One XLM for the account,
- * half for the trustline, and the rest is the user's own fee money — without
+ * half for the trustline, and the rest is the user's own fee money, without
  * it they could receive USDC and be unable to send it anywhere.
  */
 test('three XLM leaves the user able to pay their own way', () => {

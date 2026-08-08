@@ -2,16 +2,16 @@
  * Following `Bridged` on the source chain.
  *
  * The watcher needs to know a burn happened without being told, because the
- * browser that made it may never come back — a tab closed between the burn and
+ * browser that made it may never come back, a tab closed between the burn and
  * the confirmation still leaves USDC that has to arrive. So the log is the
  * source of truth and the frontend's message is only ever an accelerator.
  *
  * Two things this is careful about:
  *
  * **Reorgs.** A log read at the chain tip can be unwritten. Nothing here
- * spends on a log alone — `verifyPaidBurn` re-reads the receipt when the
+ * spends on a log alone, `verifyPaidBurn` re-reads the receipt when the
  * transfer is actually worked, and Circle will not attest an unfinalised burn
- * anyway — but a cursor that runs ahead of a reorg silently skips transfers,
+ * anyway, but a cursor that runs ahead of a reorg silently skips transfers,
  * which is worse than being slow. So it stays a few blocks behind the tip.
  *
  * **Range limits.** Public RPCs cap `eth_getLogs` spans. Asking for everything
@@ -42,7 +42,7 @@ export async function latestBlock(rpc, { fetchImpl = fetch } = {}) {
  * Reads `Bridged` logs in a range.
  *
  * @returns One entry per burn, carrying the decoded event and where it was
- *          found — the block number matters for the cursor, the transaction
+ *          found, the block number matters for the cursor, the transaction
  *          hash is what everything downstream is keyed on.
  */
 export async function fetchBridgedLogs(

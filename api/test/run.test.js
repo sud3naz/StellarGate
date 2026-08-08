@@ -81,7 +81,7 @@ test('a burn found in a log becomes work, then a delivery', async () => {
 
 /**
  * A log is enough to know a transfer exists. It is not enough to provision
- * one — that needs the user's signature, which only the browser has.
+ * one, that needs the user's signature, which only the browser has.
  */
 test('a burn without its setup is remembered but not provisioned', async () => {
   const store = new Store();
@@ -204,7 +204,7 @@ function bothChains({ asked = [], latest = 4026352, oldest = 3905393, events = [
  *
  * Soroban has no "from wherever you are": `getEvents` refuses a request naming
  * neither a cursor nor a ledger. Nothing supplied one, so every poll failed
- * into the retry log — six hundred and fifty-one times in one night — and a
+ * into the retry log, six hundred and fifty-one times in one night, and a
  * burn that left Stellar with a ready attestation sat unclaimed while the page
  * said the bridge would take care of it.
  */

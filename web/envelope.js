@@ -1,8 +1,8 @@
 /**
  * Reading a transaction before signing it.
  *
- * The setup has to be built on the server — a page cannot know the channel
- * account's sequence number — and that means the user is asked to sign
+ * The setup has to be built on the server, a page cannot know the channel
+ * account's sequence number, and that means the user is asked to sign
  * something they did not construct. Freighter shows them what it is, which is
  * the real defence, and relies on somebody reading it.
  *
@@ -14,7 +14,7 @@
  * CDN, and compromising one is not compromising the other.
  *
  * It **fails closed**. An operation type it does not recognise, a
- * precondition it cannot read, a byte left over at the end — all refusals. A
+ * precondition it cannot read, a byte left over at the end, all refusals. A
  * parser that guesses at the parts it does not understand is worth less than
  * no parser, because it produces confidence rather than safety.
  *
@@ -54,7 +54,7 @@ class Reader {
   }
 
   /// XDR has no 64-bit reader in a browser without BigInt gymnastics, and
-  /// nothing here needs the value — only to step over it.
+  /// nothing here needs the value, only to step over it.
   skip64() {
     this.take(8);
   }
@@ -158,7 +158,7 @@ function readOperation(r, txSource) {
 
 /**
  * Decodes a transaction envelope far enough to say who is being asked for
- * what. Not a general XDR reader and not trying to be — everything outside
+ * what. Not a general XDR reader and not trying to be, everything outside
  * the shapes a setup is made of is a refusal.
  */
 export function parseEnvelope(base64) {

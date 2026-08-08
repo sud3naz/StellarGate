@@ -8,7 +8,7 @@ use soroban_sdk::{
 use crate::{mint_recipient, Error, ReverseBridge, ReverseBridgeClient, MIN_AMOUNT};
 
 /// A stand-in for Circle's messenger: it takes the USDC the way the real one
-/// does — by transferring it out of the caller — and records what it was
+/// does, by transferring it out of the caller, and records what it was
 /// asked for. Everything worth checking here is what we hand it.
 mod messenger {
     use soroban_sdk::{contract, contractimpl, contracttype, token, Address, BytesN, Env};
@@ -49,7 +49,7 @@ mod messenger {
             // The real one pulls with `transfer_from`, which is what makes an
             // allowance necessary rather than an authorised call. The first
             // version of this mock used `transfer`, every test passed, and the
-            // contract failed on chain — so the mock's fidelity here is the
+            // contract failed on chain, so the mock's fidelity here is the
             // whole point of it.
             token::TokenClient::new(&env, &burn_token).transfer_from(
                 &env.current_contract_address(),
@@ -190,7 +190,7 @@ fn the_allowance_moves_but_not_past_its_ceiling() {
 }
 
 /// The one mistake an EVM address makes unambiguously. Everything else about
-/// twenty raw bytes is unverifiable — EIP-55 is a convention about
+/// twenty raw bytes is unverifiable, EIP-55 is a convention about
 /// capitalisation, and it does not survive being lowercased on the way here.
 #[test]
 fn refuses_the_zero_address() {

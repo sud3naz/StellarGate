@@ -27,7 +27,7 @@ Circle's contracts this depends on, none of them ours:
 
 ## The transfer that matters
 
-An address with **no account on the ledger** — Horizon answered 404 — receiving
+An address with **no account on the ledger**, Horizon answered 404, receiving
 USDC and arriving able to spend it, having never held XLM.
 
 | | |
@@ -40,7 +40,7 @@ USDC and arriving able to spend it, having never held XLM.
 Timed from the burn: the account existed with its trustline at **13 seconds**,
 Circle attested at **28**, the USDC landed at **40**.
 
-The same thing at hard finality, for comparison — same code, slower rail:
+The same thing at hard finality, for comparison, same code, slower rail:
 
 | | |
 |---|---|
@@ -74,7 +74,7 @@ assertions.
 The `topup` row is the one the README argues for at length: an account that
 exists but cannot afford its own trustline reserve is in the same position as
 one that does not exist, so it gets the same three XLM and pays the same fee.
-The only difference is the operation — a `payment` where the other gets a
+The only difference is the operation, a `payment` where the other gets a
 `createAccount`. Seventeen seconds from burn to delivery.
 
 The `trustline` row is the other half of that argument. That user's XLM
@@ -85,14 +85,14 @@ one.
 ## Being late costs nothing, checked rather than claimed
 
 The delivery ends in a token transfer that fails if the recipient has no USDC
-trustline. The claim has always been that this is survivable — the CCTP
+trustline. The claim has always been that this is survivable, the CCTP
 message is not consumed, so the same one can be presented again. Run against
 `0x2aa6bbc94909baf6e60e2b154c6d2174276da533c5b3c75db8f374d9d6ce1390`:
 
 | | |
 |---|---|
 | First attempt, no trustline | refused at simulation, `retryable`, naming the trustline |
-| Trustline added | — |
+| Trustline added | (no output) |
 | Same message, second attempt | delivered 1.1938450 USDC |
 
 Nothing was lost and nothing had to be re-burned.
@@ -102,7 +102,7 @@ Nothing was lost and nothing had to be re-burned.
 **Stellar takes fast transfers.** The claim that it does not is what this
 repository was built on. Twenty-nine seconds against twenty-five minutes, for
 1.3 basis points, with Stellar's `TokenMessengerMinter` accepting the
-unfinalized message through `handle_recv_unfinalized_message` — a function the
+unfinalized message through `handle_recv_unfinalized_message`, a function the
 mainnet contract implements as well. The route is unused, which is the likely
 reason nobody had looked.
 
@@ -114,8 +114,8 @@ four. Neither arrived. Every delivery here was made by calling
 **A `maxFee` too small costs speed, not money.** The burn above went out with
 an allowance of one unit, far under the 1.3 basis points Circle wanted. It sat
 for twenty minutes reporting `delayReason: insufficient_fee`, then attested at
-hard finality instead — `finalityThresholdExecuted` 2000 against the 1000
-asked for — and delivered the full 2 USDC with no fee at all.
+hard finality instead, `finalityThresholdExecuted` 2000 against the 1000
+asked for, and delivered the full 2 USDC with no fee at all.
 
 ## One mistake, kept here on purpose
 
@@ -126,8 +126,8 @@ for.
 
 `flow.js` refuses that transition. It was never consulted: `submit()` is
 reachable without going through `advance()`, so the guard sat beside the path
-rather than on it. The fix is in the README — whoever spends the XLM has to
-read the burn receipt itself rather than be told about it — and it is the
+rather than on it. The fix is in the README, whoever spends the XLM has to
+read the burn receipt itself rather than be told about it, and it is the
 first thing the watcher has to get right.
 
 Cost: three XLM of testnet money. Worth more than that as a finding.
@@ -165,8 +165,8 @@ turns out not to be needed for.
 
 The first deployment failed on chain with `Error(Contract, #9)`, out of a
 `transfer_from` nobody had written. Circle's messenger takes the tokens by
-pulling them — approve first, then `transfer_from`, the same shape as the EVM
-side — and the contract had instead authorised a `transfer` sub-invocation,
+pulling them, approve first, then `transfer_from`, the same shape as the EVM
+side, and the contract had instead authorised a `transfer` sub-invocation,
 which is the other way tokens move and not the one being used.
 
 The mock in the tests pulled the same wrong way. So all fourteen passed, and

@@ -8,7 +8,7 @@
  *
  * We make that call rather than the user, and that is not the same decision as
  * paying their gas. `receiveMessage` is permissionless but somebody has to
- * make it, and a user who has no ETH cannot — so leaving it to them does not
+ * make it, and a user who has no ETH cannot, so leaving it to them does not
  * mean they arrive without gas money, it means they do not arrive at all. What
  * they are left with is the thing that was decided: USDC on Base and nothing
  * to move it with.
@@ -79,8 +79,8 @@ export async function ledgerWindow(rpcUrl, { fetchImpl = fetch } = {}) {
 /**
  * Reads `Bridged` events out of the Soroban contract.
  *
- * There is no receipt to read on this side — a Stellar transaction does not
- * hand back logs the way an EVM one does — so a burn is only knowable through
+ * There is no receipt to read on this side, a Stellar transaction does not
+ * hand back logs the way an EVM one does, so a burn is only knowable through
  * what the contract chose to say about it. That is why the event carries the
  * amounts rather than only a reference to them.
  *
@@ -95,7 +95,7 @@ export async function fetchStellarBurns(
   if (!cursor && !startLedger) {
     // Refused here rather than by the node, because the node's answer is
     // "startLedger must be positive" and the caller's mistake was not passing
-    // one at all — a difference worth a sentence when this is being read out
+    // one at all, a difference worth a sentence when this is being read out
     // of a log at four in the morning.
     throw new Error('fetchStellarBurns needs a cursor or a ledger to start from');
   }

@@ -47,7 +47,7 @@ test('a transfer needs both a burn and a recipient', async () => {
 
 /**
  * The griefing vector this endpoint exists to not have. `remember` refuses one
- * burn against two addresses, so whoever files first wins — and anyone can
+ * burn against two addresses, so whoever files first wins, and anyone can
  * read a transaction hash off the chain. Verifying before recording means a
  * recipient the burn does not name is never written down at all.
  */
@@ -65,7 +65,7 @@ test('a burn cannot be filed against an address it did not pay', async () => {
 
 /**
  * The browser posts within a second of burning, and the receipt may not be
- * visible yet. That is a "come back", not a refusal — and recording it now
+ * visible yet. That is a "come back", not a refusal, and recording it now
  * would mean recording something unverified.
  */
 test('a burn the chain has not shown yet is answered with come back', async () => {
@@ -135,7 +135,7 @@ test('an unknown route is refused', async () => {
 
 /**
  * The page and the watcher are never the same origin. However this is
- * arranged — a static host and a service, or two ports on one laptop — the
+ * arranged, a static host and a service, or two ports on one laptop, the
  * browser asks permission first and refuses everything without it.
  */
 test('a preflight is answered rather than looked up as a route', async () => {

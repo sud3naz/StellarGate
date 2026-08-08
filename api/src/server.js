@@ -1,7 +1,7 @@
 /**
  * The one thing the browser has that the chain does not: the signed setup.
  *
- * Everything else the watcher needs it can read for itself — the burn is a log
+ * Everything else the watcher needs it can read for itself, the burn is a log
  * on Base, the attestation is Circle's to give. But the transaction that
  * creates the user's account carries the user's own signature, taken in
  * Freighter before the burn, and if the tab closes without handing it over
@@ -9,12 +9,12 @@
  * real job is to accept that XDR.
  *
  * It verifies before it records, which matters more than it looks. `remember`
- * refuses to file one burn against two addresses — sensible on its own, and a
+ * refuses to file one burn against two addresses, sensible on its own, and a
  * griefing vector if anyone can file first: post a real transaction hash with
  * the wrong recipient and the legitimate transfer is locked out of its own
  * record. Checking the burn against the chain first closes that, because a
  * recipient the burn does not name never gets written down. No money was ever
- * at risk — spending is gated separately — but a user stuck behind somebody
+ * at risk, spending is gated separately, but a user stuck behind somebody
  * else's lie is still a user who cannot be paid.
  */
 
@@ -38,7 +38,7 @@ export function createHandler({ store, verifyBurn, buildSetup = null, buildOutbo
      *
      * It has to be built here: the browser cannot know the channel account's
      * sequence number, and should not know the funder's address. What comes
-     * back is signed by the channel and **not** by the funder — the funder
+     * back is signed by the channel and **not** by the funder, the funder
      * signs on the far side of the burn, in {submit}, which is what stops
      * this endpoint from handing out three XLM to anyone who asks for it.
      *
@@ -77,7 +77,7 @@ export function createHandler({ store, verifyBurn, buildSetup = null, buildOutbo
       }
 
       // The receipt is not visible yet. Common in the seconds after a burn,
-      // and not a refusal — the client should come back. Recording it now
+      // and not a refusal, the client should come back. Recording it now
       // would mean recording something unverified.
       if (!proof) {
         return json(202, { status: 'pending', retry: true, reason: 'burn not on chain yet' });
@@ -105,7 +105,7 @@ export function createHandler({ store, verifyBurn, buildSetup = null, buildOutbo
      * nothing.
      *
      * Nothing is recorded here either. The burn is the commitment, and until
-     * it lands there is nothing to remember — the watcher finds it in the
+     * it lands there is nothing to remember, the watcher finds it in the
      * contract's own events whether this endpoint was ever called or not.
      */
     if (method === 'POST' && path === '/outbound') {
@@ -148,8 +148,8 @@ export function createHandler({ store, verifyBurn, buildSetup = null, buildOutbo
 export function listen(handle, { port = 8787, createServer, allowOrigin = '*' } = {}) {
   const server = createServer(async (req, res) => {
     // The page and the watcher are different origins whichever way this is
-    // arranged — a static host and a service, or a local server on one port
-    // talking to one on another — so the browser asks permission first and
+    // arranged, a static host and a service, or a local server on one port
+    // talking to one on another, so the browser asks permission first and
     // refuses everything without it.
     res.setHeader('access-control-allow-origin', allowOrigin);
     res.setHeader('access-control-allow-headers', 'content-type');

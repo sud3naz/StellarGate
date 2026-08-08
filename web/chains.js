@@ -1,15 +1,15 @@
 /**
  * The ends this bridge can have, and the ones it cannot have yet.
  *
- * CCTP reaches a long way — every chain here is one Circle already carries
- * USDC between — and almost none of that reach is ours. What makes a route
+ * CCTP reaches a long way, every chain here is one Circle already carries
+ * USDC between, and almost none of that reach is ours. What makes a route
  * work is a contract on the source side to take the fee and a watcher that
  * knows how to finish it, and today that is Base and Stellar.
  *
  * The rest are listed anyway, disabled. Leaving a chain out only prompts the
  * question again from somebody who knows CCTP supports it; saying "not yet"
  * answers it. The `domain` is Circle's, and it is filled in only where it has
- * been read off their own contract tables rather than remembered — a wrong
+ * been read off their own contract tables rather than remembered, a wrong
  * domain is a burn that mints somewhere nobody is looking.
  */
 
@@ -84,7 +84,7 @@ export function fillChainPicker(select, selected) {
   for (const [id, chain] of Object.entries(CHAINS)) {
     const option = document.createElement('option');
     option.value = id;
-    option.textContent = chain.live ? chain.name : `${chain.name} — coming soon`;
+    option.textContent = chain.live ? chain.name : `${chain.name}, coming soon`;
     option.disabled = !chain.live;
     option.selected = id === selected;
     select.append(option);

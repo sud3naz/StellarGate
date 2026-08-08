@@ -13,7 +13,7 @@ const web = join(dirname(fileURLToPath(import.meta.url)), '../../web');
  * a function that another module imported by name; the file stayed
  * syntactically perfect, `node --check` passed on every file, and the whole
  * of `app.js` failed to evaluate in the browser. The page rendered its static
- * HTML and did nothing — empty dropdowns, dead buttons — which looks like a
+ * HTML and did nothing, empty dropdowns, dead buttons, which looks like a
  * styling problem and is not one.
  *
  * A missing export is a link between two files, so no single file can be
@@ -124,7 +124,7 @@ test('the page asks for nothing that is not there', () => {
  * and destructuring it threw on the first line of every transfer. The button
  * worked perfectly and the work behind it never started.
  *
- * A call site is not a file, so loading the modules does not catch this — the
+ * A call site is not a file, so loading the modules does not catch this, the
  * throw only happens when somebody clicks. Reading the calls does.
  */
 test('setStatus is only ever asked for a status it has', () => {
@@ -153,7 +153,7 @@ test('setStatus is only ever asked for a status it has', () => {
  * This page signs whatever transaction that origin hands back, so a `?api=`
  * override would let somebody send a link to the real page with a hostile
  * watcher behind it and have a wallet asked to sign whatever it liked. The
- * origin the page was served from carries no such invitation — anyone who can
+ * origin the page was served from carries no such invitation, anyone who can
  * change it is already serving the page.
  */
 test('the watcher address is never taken from the URL', () => {
@@ -167,15 +167,15 @@ test('the watcher address is never taken from the URL', () => {
 /**
  * The quote and the burn ask the same question the same way.
  *
- * They did not. The quote read `fundsUser` — true only when our XLM is
- * actually going to be spent — and the burn read `needs !== 'nothing'`, which
+ * They did not. The quote read `fundsUser`, true only when our XLM is
+ * actually going to be spent, and the burn read `needs !== 'nothing'`, which
  * is also true for an account that exists and can pay its own trustline
  * reserve. So a destination holding ten thousand XLM was shown "Account
  * activation 0.00" and charged three dollars for an activation it did not
  * need and did not receive.
  *
  * Both expressions were valid JavaScript, both modules loaded, every status
- * key existed. Nothing about either line was wrong on its own — only that
+ * key existed. Nothing about either line was wrong on its own, only that
  * there were two of them.
  */
 test('the quote and the burn agree on who needs activating', () => {

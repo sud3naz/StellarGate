@@ -259,7 +259,7 @@ test('a missing trustline is a wait, not a loss', () => {
  * The real refusal, taken verbatim from replaying an already-delivered
  * message against Circle's forwarder on testnet. The first version of
  * classifyFailure searched for the words "already used" and read this as
- * retryable — which would have had the watcher redeliver a finished transfer
+ * retryable, which would have had the watcher redeliver a finished transfer
  * until it gave up an hour later.
  *
  * 6908 is NonceAlreadyUsed, read from the MessageTransmitter's own error enum

@@ -133,7 +133,7 @@ test('refuses a trustline for somebody else’s USDC', () => {
 
 /**
  * Handing the account over is the quietest way to take it, and it is not a
- * payment — which is exactly why the check is "only ever a trustline" rather
+ * payment, which is exactly why the check is "only ever a trustline" rather
  * than a list of things to watch out for.
  */
 test('refuses an operation type a setup never contains', () => {
@@ -166,7 +166,7 @@ test('an operation drawn on us is not the user’s problem', () => {
 
 /**
  * An operation with no source of its own belongs to the transaction's source.
- * If that is the user, it is theirs — and reading it as somebody else's would
+ * If that is the user, it is theirs, and reading it as somebody else's would
  * be exactly the hole this is meant to close.
  */
 test('an operation with no source belongs to the transaction source', () => {

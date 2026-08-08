@@ -25,7 +25,7 @@ import {
  *
  * Derived from this page's own origin when it is being served locally, so a
  * second machine on the same network reaches the watcher on the machine that
- * served it the page rather than looking for one on itself — which is what
+ * served it the page rather than looking for one on itself, which is what
  * `localhost` means over there, and it is empty.
  *
  * Derived, and specifically not read from the URL. This page signs whatever
@@ -37,8 +37,8 @@ import {
 function watcherOrigin() {
   const { protocol, hostname } = window.location;
 
-  // Anything served over http is a local arrangement — the deployment is
-  // https — so the watcher is on the same host, on its own port.
+  // Anything served over http is a local arrangement, the deployment is
+  // https, so the watcher is on the same host, on its own port.
   if (protocol === 'http:') return `http://${hostname}:8787`;
 
   return 'http://localhost:8787';
@@ -50,8 +50,8 @@ const CONFIG = {
   // Filled in after deployment. Empty on purpose until then.
   bridge: '0x69752D7C3d1c7C919bc24e34cD440762F642FF00',
 
-  // Where the watcher listens. It builds the setup — the channel's sequence
-  // number and the funder's address are not the browser's business — and it
+  // Where the watcher listens. It builds the setup, the channel's sequence
+  // number and the funder's address are not the browser's business, and it
   // takes the signed one back afterwards.
   //
   // Fixed here on purpose, and deliberately not read from the URL. This page
@@ -208,7 +208,7 @@ const STATUS = {
 /**
  * The kinds a status can be, for the ones that carry their own sentence.
  *
- * {STATUS} above is the presets — a fixed situation with fixed wording. These
+ * {STATUS} above is the presets, a fixed situation with fixed wording. These
  * are for the running commentary, where the wording is the point and only the
  * colour is reusable.
  */
@@ -228,7 +228,7 @@ const KINDS = {
  * invented and never written: fifteen call sites passed a sentence to a
  * function that took one argument and read a table, so every one of them
  * destructured `undefined` and threw. That is what "the button does nothing"
- * was — the click worked, the first line of work threw, and the error went
+ * was, the click worked, the first line of work threw, and the error went
  * somewhere nobody could see it.
  */
 function setStatus(key, html) {
@@ -333,7 +333,7 @@ function showDisconnected(button, label) {
 /**
  * Forgets a wallet.
  *
- * Only here — a page cannot revoke anything at the wallet's end, and
+ * Only here, a page cannot revoke anything at the wallet's end, and
  * pretending otherwise would be a lie about who holds what. What it can do is
  * stop using it, which is what somebody means when they ask to disconnect.
  */
@@ -360,7 +360,7 @@ function disconnectStellar() {
  * The page was written when there was one direction, so which wallet belonged
  * on which side was a fact rather than a question. Adding the picker turned it
  * into a question, and everything that had been answering it by position kept
- * answering the old way — an EVM address under "From · Stellar" and a `G…`
+ * answering the old way, an EVM address under "From · Stellar" and a `G…`
  * under "To · Base".
  */
 function walletFor(chainId) {
@@ -402,8 +402,8 @@ function walletStateFor(chainId) {
 /**
  * The buttons belong to the ends, not to the wallets.
  *
- * They were bound by position — the left one always EVM, the right one always
- * Stellar — which is the same assumption the addresses were making. Swapping
+ * They were bound by position, the left one always EVM, the right one always
+ * Stellar, which is the same assumption the addresses were making. Swapping
  * the direction left "Rabby connected" sitting under "From · Stellar" and a
  * Connect button that would have asked for the wallet already in use on the
  * other side.
@@ -458,7 +458,7 @@ async function connectEvm() {
   const picked = await chooseWallet(
     'Choose a wallet',
     wallets,
-    'No wallet announced itself. Install one — Rabby and MetaMask both work — then reload.',
+    'No wallet announced itself. Install one, Rabby and MetaMask both work, then reload.',
   );
   if (!picked) return;
 
@@ -568,7 +568,7 @@ async function readBalance() {
 
     el.balance.textContent =
       state.balance === 0n
-        ? `No USDC on ${network} in this account. That is the balance, not a failure to read it — testnet USDC comes from Circle's faucet.`
+        ? `No USDC on ${network} in this account. That is the balance, not a failure to read it, testnet USDC comes from Circle's faucet.`
         : `${formatUsdc(state.balance)} USDC on ${network}.`;
   } catch (error) {
     // Saying only "could not" sends people looking at their balance, which is
@@ -618,7 +618,7 @@ async function checkDestination() {
   state.inspection = null;
 
   // An EVM destination has nothing to inspect. There is no account to create,
-  // no trustline to add, and no checksum worth trusting — EIP-55 is about
+  // no trustline to add, and no checksum worth trusting, EIP-55 is about
   // capitalisation and says nothing once an address has been lowercased. So
   // the check is a shape and the honesty is in saying what does not happen.
   if (CHAINS[state.to].family === 'evm') {
@@ -646,7 +646,7 @@ async function checkDestination() {
       '<b>The USDC will arrive; the gas will not.</b>' +
         '<span class="sub">Nothing is set up for you on ' +
         CHAINS[state.to].name +
-        ' — you will need its own currency before you can move what lands there.</span>',
+        ', you will need its own currency before you can move what lands there.</span>',
     );
     render();
     return;
@@ -688,9 +688,9 @@ function render() {
   const floor = CONFIG.minAmount + (activate ? CONFIG.activationFee : 0n);
 
   if (amount === null || amount === 0n) {
-    el.qSend.textContent = '—';
-    el.qFee.textContent = '—';
-    el.qGet.textContent = '—';
+    el.qSend.textContent = ', ';
+    el.qFee.textContent = ', ';
+    el.qGet.textContent = ', ';
     el.qActRow.hidden = true;
   } else {
     const { fee, activation, net } = quote(amount, activate);
@@ -701,7 +701,7 @@ function render() {
     // happen.
     el.qActRow.hidden = !activate || CHAINS[state.from].family === 'stellar';
     el.qAct.textContent = `${formatUsdc(activation)} USDC`;
-    el.qGet.textContent = net > 0n ? `${formatUsdc(net)} USDC` : '—';
+    el.qGet.textContent = net > 0n ? `${formatUsdc(net)} USDC` : ', ';
   }
 
   const route = pickedRoute();
@@ -918,7 +918,7 @@ render();
 // comes third because until the watcher holds the signed setup it cannot
 // finish the job.
 //
-// What the watcher hands back to be signed is deliberately incomplete — it
+// What the watcher hands back to be signed is deliberately incomplete, it
 // carries the channel's signature and not the funder's. So a user who signs
 // and never burns is holding a transaction that cannot create anything.
 // --------------------------------------------------------------------------
@@ -971,7 +971,7 @@ async function waitForReceipt(hash) {
  *
  * Shorter than the way in because there is nothing to build at the far end.
  * The burn is the only thing signed, and the user is the source of their own
- * transaction — they hold USDC on Stellar, so they hold the XLM that lets
+ * transaction, they hold USDC on Stellar, so they hold the XLM that lets
  * them, and nothing of ours is at stake before the burn lands.
  */
 async function bridgeOut() {
@@ -1033,8 +1033,8 @@ async function bridge() {
   const amount = parseUsdc(el.amount.value);
   const recipient = el.dest.value.trim();
   // The same question the quote asks, asked the same way. These were two
-  // expressions for one thing — the quote read `fundsUser`, this read "needs
-  // anything at all" — and they disagreed exactly where it costs money. An
+  // expressions for one thing, the quote read `fundsUser`, this read "needs
+  // anything at all", and they disagreed exactly where it costs money. An
   // account that exists and can pay its own trustline reserve needs no
   // activation; one was shown "Account activation 0.00" and charged three
   // dollars for one it neither needed nor received.
@@ -1051,8 +1051,7 @@ async function bridge() {
       if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the setup');
 
       if (built.body.xdr) {
-        // Read it before handing it over. The setup is built on the server —
-        // a page cannot know the channel's sequence number — so this is the
+        // Read it before handing it over. The setup is built on the server, // a page cannot know the channel's sequence number, so this is the
         // check that a tampered watcher cannot ask for a payment and have it
         // signed. Freighter would show it; this refuses before Freighter is
         // even asked.
@@ -1067,12 +1066,12 @@ async function bridge() {
         // account of ours, and that is where the fee comes from. Freighter
         // judges by the account it is signing with and has no way to see
         // that, so the warning is certain to appear for exactly the people
-        // this bridge is for — somebody with an empty Stellar account. Saying
+        // this bridge is for, somebody with an empty Stellar account. Saying
         // so first is cheaper than having them stop there.
         setStatus(
           'working',
           '<b>Sign the setup in your wallet.</b><span class="sub">Your wallet may warn ' +
-            'that you cannot afford the fee. You are not paying it — we are — and signing ' +
+            'that you cannot afford the fee. You are not paying it, we are, and signing ' +
             'costs you nothing.</span>',
         );
         setupXdr = await signWithStellar(state.stellarWallet, built.body.xdr, {
@@ -1095,7 +1094,7 @@ async function bridge() {
     await waitForReceipt(txHash);
 
     // 3. Hand it over. The watcher re-reads the burn itself before it spends
-    //    anything, so this is a shortcut and not a source of truth — the log
+    //    anything, so this is a shortcut and not a source of truth, the log
     //    would find it anyway, just without the signature.
     setStatus('working', 'Telling the bridge…');
     for (let i = 0; i < 10; i += 1) {

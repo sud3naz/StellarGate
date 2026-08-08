@@ -3,8 +3,8 @@
  *
  * No dependency does this for us because none is worth the weight: an approve
  * and one function is the entire surface. What that buys instead is a place
- * where a mistake is invisible — a wrong selector is four bytes that look
- * fine and revert on chain — so this is checked against `cast calldata` in the
+ * where a mistake is invisible, a wrong selector is four bytes that look
+ * fine and revert on chain, so this is checked against `cast calldata` in the
  * tests rather than against itself.
  */
 
@@ -23,7 +23,7 @@ export function encodeApprove(spender, amount) {
  * @dev The recipient is a `string`, so it travels out of line: four fixed
  * words, then an offset pointing past them to a length and the bytes. Getting
  * the offset wrong produces calldata that decodes to a different address,
- * which is the failure worth being careful about — the contract checks the
+ * which is the failure worth being careful about, the contract checks the
  * checksum of whatever it is handed, not of what was meant.
  */
 export function encodeBridge(amount, recipient, activate, acceptedActivationFee) {
