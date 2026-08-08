@@ -146,3 +146,32 @@ test('the watcher address is never taken from the URL', () => {
   assert.doesNotMatch(source, /location\.search/, 'the page must not read its own query string');
   assert.match(source, /function watcherOrigin/, 'it is derived, and here is where');
 });
+
+/**
+ * The quote and the burn ask the same question the same way.
+ *
+ * They did not. The quote read `fundsUser` — true only when our XLM is
+ * actually going to be spent — and the burn read `needs !== 'nothing'`, which
+ * is also true for an account that exists and can pay its own trustline
+ * reserve. So a destination holding ten thousand XLM was shown "Account
+ * activation 0.00" and charged three dollars for an activation it did not
+ * need and did not receive.
+ *
+ * Both expressions were valid JavaScript, both modules loaded, every status
+ * key existed. Nothing about either line was wrong on its own — only that
+ * there were two of them.
+ */
+test('the quote and the burn agree on who needs activating', () => {
+  const source = readFileSync(join(web, 'app.js'), 'utf8');
+
+  const ways = [...source.matchAll(/const activate = ([^;]+);/g)].map(([, expr]) =>
+    expr.replace(/\s+/g, ' ').trim(),
+  );
+
+  assert.ok(ways.length >= 2, 'both the quote and the burn should be deciding this');
+  assert.equal(
+    new Set(ways).size,
+    1,
+    `activation is decided ${new Set(ways).size} ways: ${[...new Set(ways)].join('  |  ')}`,
+  );
+});

@@ -755,7 +755,13 @@ async function bridge() {
 
   const amount = parseUsdc(el.amount.value);
   const recipient = el.dest.value.trim();
-  const activate = state.inspection?.needs !== 'nothing';
+  // The same question the quote asks, asked the same way. These were two
+  // expressions for one thing — the quote read `fundsUser`, this read "needs
+  // anything at all" — and they disagreed exactly where it costs money. An
+  // account that exists and can pay its own trustline reserve needs no
+  // activation; one was shown "Account activation 0.00" and charged three
+  // dollars for one it neither needed nor received.
+  const activate = state.inspection?.fundsUser === true;
 
   el.go.disabled = true;
   try {
