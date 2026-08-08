@@ -305,6 +305,13 @@ is not gated behind a fee that user never owed.
   Claiming is still done for them, because `receiveMessage` is permissionless
   but somebody has to call it — leaving that to a user with no ETH would mean
   not arriving at all rather than arriving without gas money.
+- The fee warning. A wallet asked to sign the setup judges affordability by
+  the account it is signing with, and that account is empty — the transaction
+  is sourced from a channel account of ours and the fee comes from there. So
+  Freighter says "insufficient funds for fee" to precisely the people this
+  bridge exists for, and is wrong. The page says so before asking, which is a
+  patch over the sentence rather than a fix for it. There may not be a fix:
+  nothing in a transaction tells a wallet that somebody else is paying.
 - Stellar wallets other than Freighter. Three were listed at one point,
   written from memory, and checking them against Stellar Wallets Kit found
   two of the three globals did not exist and the third needed waiting for.

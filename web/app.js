@@ -785,7 +785,19 @@ async function bridge() {
           issuer: CONFIG.stellar.usdcIssuer,
         });
 
-        setStatus('working', 'Sign the setup in Freighter…');
+        // Freighter will say the account cannot afford the fee. It cannot,
+        // and it is not paying it: the transaction is sourced from a channel
+        // account of ours, and that is where the fee comes from. Freighter
+        // judges by the account it is signing with and has no way to see
+        // that, so the warning is certain to appear for exactly the people
+        // this bridge is for — somebody with an empty Stellar account. Saying
+        // so first is cheaper than having them stop there.
+        setStatus(
+          'working',
+          '<b>Sign the setup in your wallet.</b><span class="sub">Your wallet may warn ' +
+            'that you cannot afford the fee. You are not paying it — we are — and signing ' +
+            'costs you nothing.</span>',
+        );
         setupXdr = await signWithStellar(state.stellarWallet, built.body.xdr, {
           networkPassphrase: CONFIG.stellar.passphrase,
           address: state.stellar,
