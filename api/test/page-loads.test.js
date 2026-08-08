@@ -225,6 +225,16 @@ test('the ends are asked about rather than assumed', () => {
 
   // And the balance comes from the chain being spent from.
   assert.match(source, /const source = CHAINS\[state\.from\]/);
+
+  // The connect buttons belong to the ends too. Bound by position, swapping
+  // left "Rabby connected" under "From · Stellar" and a Connect button that
+  // would have asked for the wallet already in use on the other side.
+  assert.match(source, /function connectSide\(side\)/);
+  assert.match(source, /\[el\.connectFrom, state\.from\]/);
+  assert.match(source, /\[el\.connectTo, state\.to\]/);
+  assert.doesNotMatch(source, /el\.connectEvm|el\.connectStellar/, 'nothing is bound to a position');
+  assert.match(html, /id="connectFrom"/);
+  assert.match(html, /id="connectTo"/);
 });
 
 /// Changing either end has to clear an address meant for the other one.

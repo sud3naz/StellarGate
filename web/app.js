@@ -103,8 +103,8 @@ const el = {
   qArrives: $('qArrives'),
   fromWho: $('fromWho'),
   toWho: $('toWho'),
-  connectEvm: $('connectEvm'),
-  connectStellar: $('connectStellar'),
+  connectFrom: $('connectFrom'),
+  connectTo: $('connectTo'),
   amount: $('amount'),
   max: $('max'),
   balance: $('balance'),
@@ -123,6 +123,7 @@ const state = {
   from: 'base',
   to: 'stellar',
   stellarWallet: null,
+  evmName: null,
   /// The provider the user picked, not whichever one wrote to window first.
   evmProvider: null,
   evm: null,
@@ -340,7 +341,6 @@ function disconnectEvm() {
   state.evmProvider = null;
   state.evm = null;
   state.balance = null;
-  showDisconnected(el.connectEvm, 'Connect');
   renderSides();
   readBalance();
   render();
@@ -349,7 +349,6 @@ function disconnectEvm() {
 function disconnectStellar() {
   state.stellarWallet = null;
   state.stellar = null;
-  showDisconnected(el.connectStellar, 'Connect');
   renderSides();
   readBalance();
   render();
@@ -392,9 +391,44 @@ function showSide(node, chainId) {
   node.classList.remove('empty');
 }
 
+/** Which wallet answers for a chain, and whether it is connected. */
+function walletStateFor(chainId) {
+  const family = CHAINS[chainId]?.family;
+  return family === 'stellar'
+    ? { connected: Boolean(state.stellar), name: state.stellarWallet?.name }
+    : { connected: Boolean(state.evm), name: state.evmName };
+}
+
+/**
+ * The buttons belong to the ends, not to the wallets.
+ *
+ * They were bound by position — the left one always EVM, the right one always
+ * Stellar — which is the same assumption the addresses were making. Swapping
+ * the direction left "Rabby connected" sitting under "From · Stellar" and a
+ * Connect button that would have asked for the wallet already in use on the
+ * other side.
+ */
+function renderConnects() {
+  for (const [button, chainId] of [
+    [el.connectFrom, state.from],
+    [el.connectTo, state.to],
+  ]) {
+    const wallet = walletStateFor(chainId);
+    if (wallet.connected) showConnected(button, `${wallet.name ?? 'Wallet'} connected`);
+    else showDisconnected(button, `Connect on ${CHAINS[chainId]?.name ?? '…'}`);
+  }
+}
+
 function renderSides() {
   showSide(el.fromWho, state.from);
   showSide(el.toWho, state.to);
+  renderConnects();
+}
+
+/** Connects, or disconnects, whichever wallet that end needs. */
+function connectSide(side) {
+  const family = CHAINS[state[side]]?.family;
+  return family === 'stellar' ? connectStellar() : connectEvm();
 }
 
 async function connectEvm() {
@@ -411,6 +445,7 @@ async function connectEvm() {
   const [account] = await provider.request({ method: 'eth_requestAccounts' });
   state.evmProvider = provider;
   state.evm = account;
+  state.evmName = picked.name;
 
   // A wallet connected to some other chain answers `eth_call` from that chain,
   // which is how "could not read your balance" happens to somebody whose
@@ -420,7 +455,6 @@ async function connectEvm() {
   } catch (error) {
     el.balance.textContent = String(error?.message ?? error);
   }
-  showConnected(el.connectEvm, `${picked.name} connected`);
   renderSides();
 
   await readBalance();
@@ -541,7 +575,6 @@ async function connectStellar() {
 
     state.stellarWallet = picked;
     state.stellar = address;
-    showConnected(el.connectStellar, `${picked.name} connected`);
     renderSides();
 
     // Prefill, but leave it editable: an exchange deposit needs a different
@@ -761,8 +794,8 @@ async function renderHistory() {
   }
 }
 
-el.connectEvm.addEventListener('click', connectEvm);
-el.connectStellar.addEventListener('click', connectStellar);
+el.connectFrom.addEventListener('click', () => connectSide('from'));
+el.connectTo.addEventListener('click', () => connectSide('to'));
 el.dest.addEventListener('input', () => {
   clearTimeout(el.dest._t);
   el.dest._t = setTimeout(checkDestination, 300);
