@@ -223,6 +223,7 @@ api/src/config.js             networks, issuers, Circle's contracts
 web/index.html                the bridge, drawn as a bridge
 web/app.js                    wallets, the destination check, the transfer
 web/chains.js                 the ends we have, and the ones we do not yet
+web/history.js                what this browser has sent, kept in it
 web/wallets.js                finding the wallets somebody has, not guessing
 web/abi.js                    the two calls, encoded by hand and checked
 web/envelope.js               reads a setup before Freighter is asked to sign it
@@ -236,7 +237,7 @@ script/Deploy.s.sol           deployment, which guesses at nothing
 ```bash
 cargo test          # 14, the Soroban side
 forge test          # 47
-cd api && npm test  # 167, the browser included
+cd api && npm test  # 181, the browser included
 ```
 
 228 tests. `StellarStrkey` is checked against Circle's real USDC issuer address

@@ -50,9 +50,26 @@ function shimBrowser() {
   };
   globalThis.Event = class {};
   globalThis.TextEncoder = TextEncoder;
+
+  // The page keeps its own history here. A shim without it is a browser the
+  // page cannot run in, which is the whole thing this test is watching for.
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => store.get(k) ?? null,
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
 }
 
-const MODULES = ['strkey.js', 'abi.js', 'chains.js', 'envelope.js', 'wallets.js', 'app.js'];
+const MODULES = [
+  'strkey.js',
+  'abi.js',
+  'chains.js',
+  'envelope.js',
+  'wallets.js',
+  'history.js',
+  'app.js',
+];
 
 test('every module the page loads can be loaded', async () => {
   shimBrowser();

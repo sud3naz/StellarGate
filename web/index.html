@@ -119,7 +119,28 @@ header{display:flex;align-items:center;gap:12px;margin-bottom:28px}
   transition:background .12s;
 }
 .connects button:hover:not(:disabled){background:var(--beige-deep)}
-.connects button:disabled{color:var(--ok);cursor:default;background:var(--ok-wash)}
+.connects button.on{color:var(--ok);background:var(--ok-wash)}
+/* Disconnecting is a small thing next to a large one: available without
+   competing with the button that does the work. */
+.connects .drop{
+  margin-left:8px;font-size:11.5px;font-weight:650;letter-spacing:.02em;
+  color:var(--ink-faint);text-decoration:underline;text-underline-offset:2px;
+}
+.connects button.on:hover .drop{color:var(--bad)}
+
+/* ---------- history ---------- */
+.history{padding:16px 18px}
+.history h3{font-size:12px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 4px}
+.history .none{font-size:13.5px;color:var(--ink-faint);padding:6px 0 2px}
+.hrow{display:flex;align-items:baseline;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.hrow:first-of-type{border-top:0}
+.hrow .way{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+.hrow .amt{font-family:var(--mono);font-size:12.5px;color:var(--ink-soft)}
+.hrow .when{margin-left:auto;font-size:12px;color:var(--ink-faint);white-space:nowrap}
+.hrow .state{font-size:12px;font-weight:650;padding:2px 7px;border-radius:999px;white-space:nowrap}
+.hrow .state.ok{background:var(--ok-wash);color:var(--ok)}
+.hrow .state.waiting{background:var(--beige);color:var(--ink-soft)}
+.hrow a{color:var(--ink-soft);font-size:12px}
 
 /* ---------- form ---------- */
 .field{padding:18px;border-top:1px solid var(--line)}
@@ -362,6 +383,13 @@ footer a{color:var(--ink-soft)}
           <small>Under a minute. Stellar does take Circle's fast transfers,
           whatever the documentation reads like.</small></span>
       </div>
+    </div>
+  </div>
+
+  <div class="card" id="historyCard" hidden>
+    <div class="history">
+      <h3>Your transfers</h3>
+      <div id="historyList"></div>
     </div>
   </div>
 

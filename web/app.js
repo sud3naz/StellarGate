@@ -12,6 +12,7 @@ import { strkeyKind, underlyingAccount } from './strkey.js';
 import { encodeApprove, encodeBridge } from './abi.js';
 import { parseEnvelope, assertOnlyAskingForTrustline } from './envelope.js';
 import { CHAINS, routeStatus, fillChainPicker } from './chains.js';
+import * as history from './history.js';
 import {
   discoverEvmWallets,
   discoverStellarWallets,
@@ -96,6 +97,8 @@ const el = {
   sheetTitle: $('sheetTitle'),
   sheetList: $('sheetList'),
   sheetCancel: $('sheetCancel'),
+  historyCard: $('historyCard'),
+  historyList: $('historyList'),
   fromWho: $('fromWho'),
   toWho: $('toWho'),
   connectEvm: $('connectEvm'),
@@ -299,7 +302,57 @@ function chooseWallet(title, wallets, empty) {
   });
 }
 
+/**
+ * A connected wallet stays clickable, because a wallet you cannot leave is a
+ * wallet you are stuck in. Somebody with three accounts will want a different
+ * one, and the only alternative on offer was reloading the page.
+ */
+function showConnected(button, label) {
+  button.classList.add('on');
+  button.disabled = false;
+  button.innerHTML = '';
+  button.append(document.createTextNode(label));
+  const drop = document.createElement('span');
+  drop.className = 'drop';
+  drop.textContent = 'disconnect';
+  button.append(drop);
+}
+
+function showDisconnected(button, label) {
+  button.classList.remove('on');
+  button.disabled = false;
+  button.textContent = label;
+}
+
+/**
+ * Forgets a wallet.
+ *
+ * Only here — a page cannot revoke anything at the wallet's end, and
+ * pretending otherwise would be a lie about who holds what. What it can do is
+ * stop using it, which is what somebody means when they ask to disconnect.
+ */
+function disconnectEvm() {
+  state.evmProvider = null;
+  state.evm = null;
+  state.balance = null;
+  el.fromWho.textContent = 'not connected';
+  el.fromWho.classList.add('empty');
+  el.balance.textContent = 'Connect a wallet on Base to see your balance.';
+  showDisconnected(el.connectEvm, 'Connect');
+  render();
+}
+
+function disconnectStellar() {
+  state.stellarWallet = null;
+  state.stellar = null;
+  el.toWho.textContent = 'not connected';
+  el.toWho.classList.add('empty');
+  showDisconnected(el.connectStellar, 'Connect');
+  render();
+}
+
 async function connectEvm() {
+  if (state.evm) return disconnectEvm();
   const wallets = await discoverEvmWallets();
   const picked = await chooseWallet(
     'Choose a wallet',
@@ -332,8 +385,7 @@ async function connectEvm() {
   link.textContent = `${account.slice(0, 10)}…${account.slice(-8)}`;
   el.fromWho.append(link);
   el.fromWho.classList.remove('empty');
-  el.connectEvm.textContent = `${picked.name} connected`;
-  el.connectEvm.disabled = true;
+  showConnected(el.connectEvm, `${picked.name} connected`);
 
   await readBalance();
   render();
@@ -399,6 +451,8 @@ async function readBalance() {
 }
 
 async function connectStellar() {
+  if (state.stellar) return disconnectStellar();
+
   const wallets = await discoverStellarWallets();
   const picked = await chooseWallet(
     'Choose a Stellar wallet',
@@ -421,8 +475,7 @@ async function connectStellar() {
     seen.textContent = `${address.slice(0, 10)}…${address.slice(-8)}`;
     el.toWho.append(seen);
     el.toWho.classList.remove('empty');
-    el.connectStellar.textContent = `${picked.name} connected`;
-    el.connectStellar.disabled = true;
+    showConnected(el.connectStellar, `${picked.name} connected`);
 
     // Prefill, but leave it editable: an exchange deposit needs a different
     // address than the one in the wallet.
@@ -563,6 +616,77 @@ function render() {
   el.steps.forEach((step, i) => step.classList.toggle('on', ready && i === 0));
 }
 
+// --------------------------------------------------------------------------
+// What this browser has sent
+// --------------------------------------------------------------------------
+
+const WHEN = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' });
+
+function explorerFor(entry) {
+  return entry.direction === 'out'
+    ? `${CONFIG.stellar.explorer}/tx/${entry.txHash}`
+    : `${CONFIG.base.explorer}/tx/${entry.txHash}`;
+}
+
+/**
+ * Draws the list, and asks the watcher about anything still in flight.
+ *
+ * Only the unfinished ones are asked about: a delivery is a fact about a chain
+ * and does not become untrue, so once it is recorded there is nothing left to
+ * learn and no reason to keep asking.
+ */
+async function renderHistory() {
+  const entries = history.all();
+  el.historyCard.hidden = entries.length === 0;
+  el.historyList.innerHTML = '';
+
+  for (const entry of entries) {
+    const row = document.createElement('div');
+    row.className = 'hrow';
+
+    const way = document.createElement('span');
+    way.className = 'way';
+    way.textContent = `${CHAINS[entry.from]?.name ?? entry.from} → ${
+      CHAINS[entry.to]?.name ?? entry.to
+    }`;
+
+    const amount = document.createElement('span');
+    amount.className = 'amt';
+    amount.textContent = `${entry.amount} USDC`;
+
+    const state_ = document.createElement('span');
+    state_.className = `state ${entry.delivered ? 'ok' : 'waiting'}`;
+    state_.textContent = entry.delivered ? 'delivered' : 'in flight';
+
+    const seen = document.createElement('a');
+    seen.href = explorerFor(entry);
+    seen.target = '_blank';
+    seen.rel = 'noopener';
+    seen.textContent = 'burn';
+
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = WHEN.format(new Date(entry.at));
+
+    row.append(way, amount, state_, seen, when);
+    el.historyList.append(row);
+  }
+
+  for (const entry of entries.filter((e) => !e.delivered)) {
+    try {
+      const { status, body } = await api(`/transfers/${entry.txHash}`);
+      if (status === 200 && body.delivered) {
+        history.settle(entry.txHash, body.deliveredAt ?? true);
+        renderHistory();
+        return;
+      }
+    } catch {
+      // The watcher being unreachable is not news the history should shout
+      // about; the rows are already drawn from what is known.
+    }
+  }
+}
+
 el.connectEvm.addEventListener('click', connectEvm);
 el.connectStellar.addEventListener('click', connectStellar);
 el.dest.addEventListener('input', () => {
@@ -637,6 +761,8 @@ el.swap.addEventListener('click', () => {
   checkDestination();
   render();
 });
+
+renderHistory();
 
 el.net.textContent = CONFIG.network;
 setStatus('idle');
@@ -742,6 +868,16 @@ async function bridgeOut() {
     const result = (await sent.json()).result ?? {};
     if (result.status === 'ERROR') throw new Error('the burn was rejected');
 
+    history.remember({
+      txHash: result.hash,
+      direction: 'out',
+      from: state.from,
+      to: state.to,
+      amount: formatUsdc(amount),
+      recipient,
+    });
+    renderHistory();
+
     setStatus('done', `Burned. The bridge will claim it on ${CHAINS[state.to].name}.`);
   } catch (error) {
     setStatus('idle');
@@ -828,6 +964,16 @@ async function bridge() {
       await new Promise((r) => setTimeout(r, 2000));
     }
 
+    history.remember({
+      txHash,
+      direction: 'in',
+      from: state.from,
+      to: state.to,
+      amount: formatUsdc(amount),
+      recipient,
+    });
+    renderHistory();
+
     setStatus('done', 'Burned. Watching for delivery…');
     watchDelivery(txHash);
   } catch (error) {
@@ -841,6 +987,8 @@ async function watchDelivery(txHash) {
   for (let i = 0; i < 120; i += 1) {
     const { status, body } = await api(`/transfers/${txHash}`);
     if (status === 200 && body.delivered) {
+      history.settle(txHash, body.deliveredAt);
+      renderHistory();
       setStatus(
         'done',
         `Delivered. <a href="${CONFIG.stellar.explorer}/tx/${body.deliveredAt.stellarTxHash}" target="_blank" rel="noopener">See it on Stellar</a>`,
