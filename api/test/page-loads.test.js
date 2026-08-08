@@ -192,3 +192,51 @@ test('the quote and the burn agree on who needs activating', () => {
     `activation is decided ${new Set(ways).size} ways: ${[...new Set(ways)].join('  |  ')}`,
   );
 });
+
+/**
+ * Nothing about the ends is decided by position any more.
+ *
+ * The page was written when there was one direction, so which wallet belonged
+ * on which side, which chain the balance came from, and what the address field
+ * was asking for were all facts rather than questions. Adding the picker made
+ * them questions, and every place still answering the old way put an EVM
+ * address under "From · Stellar" and read a Base balance for a Stellar
+ * account.
+ *
+ * These are the specific ones that were wrong. A grep is a blunt instrument,
+ * but the failure here was a hard-coded word, and that is exactly what a grep
+ * is good at.
+ */
+test('the ends are asked about rather than assumed', () => {
+  const source = readFileSync(join(web, 'app.js'), 'utf8');
+  const html = readFileSync(join(web, 'index.html'), 'utf8');
+
+  // The address field says which chain it wants, and it is not always the same
+  // chain.
+  assert.match(source, /destLabel\.textContent = `\$\{CHAINS\[state\.to\]\.name\}/);
+  assert.match(source, /qArrives\.textContent = `Arrives on \$\{CHAINS\[state\.to\]\.name\}/);
+  assert.match(html, /id="destLabel"/);
+  assert.match(html, /id="qArrives"/);
+
+  // Which wallet is shown where follows the direction.
+  assert.match(source, /function walletFor\(chainId\)/);
+  assert.match(source, /showSide\(el\.fromWho, state\.from\)/);
+  assert.match(source, /showSide\(el\.toWho, state\.to\)/);
+
+  // And the balance comes from the chain being spent from.
+  assert.match(source, /const source = CHAINS\[state\.from\]/);
+});
+
+/// Changing either end has to clear an address meant for the other one.
+test('a direction change does not carry the old address over', () => {
+  const source = readFileSync(join(web, 'app.js'), 'utf8');
+
+  assert.match(source, /function afterDirectionChange\(\)/);
+  const body = source.slice(source.indexOf('function afterDirectionChange()'));
+  const fn = body.slice(0, body.indexOf('\n}\n'));
+
+  assert.match(fn, /el\.dest\.value = ''/, 'the field is cleared');
+  assert.match(fn, /state\.inspection = null/, 'and what was learned about it');
+  assert.match(fn, /readBalance\(\)/, 'the balance is on a different chain now');
+  assert.match(fn, /renderSides\(\)/, 'and the wallets have swapped sides');
+});

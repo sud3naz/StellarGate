@@ -337,7 +337,7 @@ footer a{color:var(--ink-soft)}
     </div>
 
     <div class="field">
-      <label for="dest">Stellar address</label>
+      <label for="dest" id="destLabel">Stellar address</label>
       <input class="addr" id="dest" type="text" spellcheck="false" autocomplete="off"
              placeholder="G… or M… for an exchange deposit">
       <div class="status is-idle" id="status">
@@ -351,7 +351,7 @@ footer a{color:var(--ink-soft)}
       <div class="row"><span>You send</span><span class="v" id="qSend">&mdash;</span></div>
       <div class="row muted"><span>Bridge fee</span><span class="v" id="qFee">&mdash;</span></div>
       <div class="row muted" id="qActRow" hidden><span>Account activation</span><span class="v" id="qAct">&mdash;</span></div>
-      <div class="row total"><span>Arrives on Stellar</span><span class="v" id="qGet">&mdash;</span></div>
+      <div class="row total"><span id="qArrives">Arrives on Stellar</span><span class="v" id="qGet">&mdash;</span></div>
     </div>
 
     <button class="go" id="go" disabled>Connect both wallets to begin</button>

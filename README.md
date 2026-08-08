@@ -237,10 +237,10 @@ script/Deploy.s.sol           deployment, which guesses at nothing
 ```bash
 cargo test          # 14, the Soroban side
 forge test          # 47
-cd api && npm test  # 181, the browser included
+cd api && npm test  # 183, the browser included
 ```
 
-228 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
+244 tests. `StellarStrkey` is checked against Circle's real USDC issuer address
 on Stellar mainnet, because a checksum implementation that only agrees with
 itself proves nothing. The hook layout is checked against the vectors in
 Circle's own `cctp-forwarder` tests, and the burn parameters against the real

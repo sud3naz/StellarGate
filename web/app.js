@@ -99,6 +99,8 @@ const el = {
   sheetCancel: $('sheetCancel'),
   historyCard: $('historyCard'),
   historyList: $('historyList'),
+  destLabel: $('destLabel'),
+  qArrives: $('qArrives'),
   fromWho: $('fromWho'),
   toWho: $('toWho'),
   connectEvm: $('connectEvm'),
@@ -193,6 +195,9 @@ const STATUS = {
   idle: ['is-idle', '?', 'Enter an address and we will check what it needs.'],
   checking: ['is-idle', '·', 'Checking this address on Stellar…'],
   invalid: ['is-bad', '!', '<b>That is not a valid Stellar address.</b><span class="sub">The checksum does not match, so a character is wrong somewhere. We check this before anything moves, because a wrong address cannot be undone.</span>'],
+  // Kept apart from the Stellar one because there is no checksum to appeal to:
+  // EIP-55 is about capitalisation and says nothing once something has been
+  // lowercased, so all that can honestly be checked is the shape.
   nothing: ['is-ok', '✓', '<b>Ready to receive.</b><span class="sub">This account already holds USDC. Nothing to set up and nothing extra to pay.</span>'],
   trustline: ['is-ok', '✓', '<b>We will add the USDC trustline.</b><span class="sub">Your account covers its own half XLM reserve, so this costs you nothing beyond the bridge fee.</span>'],
   fund: ['is-warn', '+', '<b>This address cannot hold USDC yet.</b><span class="sub">We will send it 3 XLM so it can, and add the trustline. Charged once, and only to addresses that need it.</span>'],
@@ -335,20 +340,61 @@ function disconnectEvm() {
   state.evmProvider = null;
   state.evm = null;
   state.balance = null;
-  el.fromWho.textContent = 'not connected';
-  el.fromWho.classList.add('empty');
-  el.balance.textContent = 'Connect a wallet on Base to see your balance.';
   showDisconnected(el.connectEvm, 'Connect');
+  renderSides();
+  readBalance();
   render();
 }
 
 function disconnectStellar() {
   state.stellarWallet = null;
   state.stellar = null;
-  el.toWho.textContent = 'not connected';
-  el.toWho.classList.add('empty');
   showDisconnected(el.connectStellar, 'Connect');
+  renderSides();
+  readBalance();
   render();
+}
+
+/**
+ * The address for a chain, and where to go and look at it.
+ *
+ * The page was written when there was one direction, so which wallet belonged
+ * on which side was a fact rather than a question. Adding the picker turned it
+ * into a question, and everything that had been answering it by position kept
+ * answering the old way — an EVM address under "From · Stellar" and a `G…`
+ * under "To · Base".
+ */
+function walletFor(chainId) {
+  const chain = CHAINS[chainId];
+  if (!chain) return null;
+  if (chain.family === 'stellar') {
+    return state.stellar && { address: state.stellar, href: `${CONFIG.stellar.explorer}/account/${state.stellar}` };
+  }
+  return state.evm && { address: state.evm, href: `${CONFIG.base.explorer}/address/${state.evm}` };
+}
+
+function showSide(node, chainId) {
+  const wallet = walletFor(chainId);
+  node.innerHTML = '';
+  if (!wallet) {
+    node.textContent = 'not connected';
+    node.classList.add('empty');
+    return;
+  }
+  const link = document.createElement('a');
+  link.href = wallet.href;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  // Enough of an address to tell two accounts in the same wallet apart. Four
+  // characters at each end is not, and reads as reassurance.
+  link.textContent = `${wallet.address.slice(0, 10)}…${wallet.address.slice(-8)}`;
+  node.append(link);
+  node.classList.remove('empty');
+}
+
+function renderSides() {
+  showSide(el.fromWho, state.from);
+  showSide(el.toWho, state.to);
 }
 
 async function connectEvm() {
@@ -374,18 +420,8 @@ async function connectEvm() {
   } catch (error) {
     el.balance.textContent = String(error?.message ?? error);
   }
-  // Enough of the address to tell two accounts in the same wallet apart, and
-  // a link so it can be checked rather than trusted. Four characters at each
-  // end is not enough for that and reads as reassurance.
-  el.fromWho.innerHTML = '';
-  const link = document.createElement('a');
-  link.href = `${CONFIG.base.explorer}/address/${account}`;
-  link.target = '_blank';
-  link.rel = 'noopener';
-  link.textContent = `${account.slice(0, 10)}…${account.slice(-8)}`;
-  el.fromWho.append(link);
-  el.fromWho.classList.remove('empty');
   showConnected(el.connectEvm, `${picked.name} connected`);
+  renderSides();
 
   await readBalance();
   render();
@@ -427,16 +463,53 @@ async function ensureChain(provider) {
   }
 }
 
+/**
+ * How much USDC is on the chain being spent from.
+ *
+ * Which chain that is depends on the direction, and reading the wrong one is
+ * not a cosmetic error: it is the number the Max button fills in and the one
+ * a person checks their transfer against.
+ */
 async function readBalance() {
-  if (!state.evm) return;
+  state.balance = null;
+  const source = CHAINS[state.from];
+  const network = CONFIG.network === 'testnet' ? `${source.name} testnet` : source.name;
+
+  const holder = source.family === 'stellar' ? state.stellar : state.evm;
+  if (!holder) {
+    el.balance.textContent = `Connect a wallet on ${source.name} to see your balance.`;
+    return;
+  }
+
   try {
-    const data = `0x70a08231000000000000000000000000${state.evm.slice(2)}`;
-    const result = await state.evmProvider.request({
-      method: 'eth_call',
-      params: [{ to: CONFIG.base.usdc, data }, 'latest'],
-    });
-    state.balance = BigInt(result);
-    const network = CONFIG.network === 'testnet' ? 'Base Sepolia' : 'Base';
+    if (source.family === 'stellar') {
+      // Horizon rather than the wallet: a Stellar wallet is a key and a
+      // signature, and the ledger is what knows the balance.
+      const response = await fetch(`${CONFIG.stellar.horizon}/accounts/${holder}`);
+      if (response.status === 404) {
+        el.balance.textContent = `That account does not exist on ${network} yet, so it holds nothing.`;
+        state.balance = 0n;
+        render();
+        return;
+      }
+      if (!response.ok) throw new Error(`Horizon answered ${response.status}`);
+
+      const account = await response.json();
+      const line = (account.balances ?? []).find(
+        (b) => b.asset_code === 'USDC' && b.asset_issuer === CONFIG.stellar.usdcIssuer,
+      );
+      // Stellar carries seven decimals where the EVM side carries six, and
+      // this page counts in six throughout.
+      state.balance = line ? BigInt(Math.round(Number(line.balance) * 1e6)) : 0n;
+    } else {
+      const data = `0x70a08231000000000000000000000000${holder.slice(2)}`;
+      const result = await state.evmProvider.request({
+        method: 'eth_call',
+        params: [{ to: CONFIG.base.usdc, data }, 'latest'],
+      });
+      state.balance = BigInt(result);
+    }
+
     el.balance.textContent =
       state.balance === 0n
         ? `No USDC on ${network} in this account. That is the balance, not a failure to read it — testnet USDC comes from Circle's faucet.`
@@ -444,10 +517,11 @@ async function readBalance() {
   } catch (error) {
     // Saying only "could not" sends people looking at their balance, which is
     // the one thing that is fine.
-    el.balance.textContent = `Could not read your USDC balance on Base Sepolia: ${
+    el.balance.textContent = `Could not read your USDC balance on ${network}: ${
       error?.message ?? error
     }`;
   }
+  render();
 }
 
 async function connectStellar() {
@@ -467,15 +541,8 @@ async function connectStellar() {
 
     state.stellarWallet = picked;
     state.stellar = address;
-    el.toWho.innerHTML = '';
-    const seen = document.createElement('a');
-    seen.href = `${CONFIG.stellar.explorer}/account/${address}`;
-    seen.target = '_blank';
-    seen.rel = 'noopener';
-    seen.textContent = `${address.slice(0, 10)}…${address.slice(-8)}`;
-    el.toWho.append(seen);
-    el.toWho.classList.remove('empty');
     showConnected(el.connectStellar, `${picked.name} connected`);
+    renderSides();
 
     // Prefill, but leave it editable: an exchange deposit needs a different
     // address than the one in the wallet.
@@ -579,13 +646,20 @@ function render() {
     const { fee, activation, net } = quote(amount, activate);
     el.qSend.textContent = `${formatUsdc(amount)} USDC`;
     el.qFee.textContent = `${formatUsdc(fee - activation)} USDC`;
-    el.qActRow.hidden = !activate;
+    // Nothing is activated on the way out: an EVM address exists whether
+    // anyone has heard of it or not, so the row would be a charge that cannot
+    // happen.
+    el.qActRow.hidden = !activate || CHAINS[state.from].family === 'stellar';
     el.qAct.textContent = `${formatUsdc(activation)} USDC`;
     el.qGet.textContent = net > 0n ? `${formatUsdc(net)} USDC` : '—';
   }
 
   const route = pickedRoute();
   const outbound = CHAINS[state.from].family === 'stellar';
+
+  // The words for the ends, rather than the ones the page started life with.
+  el.destLabel.textContent = `${CHAINS[state.to].name} address`;
+  el.qArrives.textContent = `Arrives on ${CHAINS[state.to].name}`;
   const ready =
     route.status.ok &&
     state.evm &&
@@ -732,9 +806,31 @@ function onChainChange(which) {
 
     state.from = el.fromChain.value;
     state.to = el.toChain.value;
-    checkDestination();
-    render();
+    afterDirectionChange();
   };
+}
+
+/**
+ * Everything that stops being true when the direction moves.
+ *
+ * The address field means a different thing at each end, the balance is on a
+ * different chain, and which wallet sits on which side has swapped. Carrying
+ * any of it over is how a `G…` ends up in a field wanting an `0x…`.
+ */
+function afterDirectionChange() {
+  el.dest.value = '';
+  el.dest.classList.remove('bad');
+  state.inspection = null;
+  el.dest.placeholder =
+    CHAINS[state.to].family === 'stellar'
+      ? 'G… or M… for an exchange deposit'
+      : `0x… on ${CHAINS[state.to].name}`;
+
+  setStatus('idle');
+  renderSides();
+  readBalance();
+  checkDestination();
+  render();
 }
 
 fillChainPicker(el.fromChain, state.from);
@@ -752,17 +848,11 @@ el.swap.addEventListener('click', () => {
   // The address field means a different thing in each direction, and carrying
   // a Stellar address over into a field wanting an EVM one is a typo waiting
   // to be signed.
-  el.dest.value = '';
-  state.inspection = null;
-  el.dest.placeholder =
-    CHAINS[state.to].family === 'stellar'
-      ? 'G… or M… for an exchange deposit'
-      : '0x… on ' + CHAINS[state.to].name;
-  checkDestination();
-  render();
+  afterDirectionChange();
 });
 
 renderHistory();
+renderSides();
 
 el.net.textContent = CONFIG.network;
 setStatus('idle');
