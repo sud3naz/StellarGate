@@ -55,6 +55,28 @@ export function classifyClaimFailure(error) {
 }
 
 /**
+ * How much of the chain this node still has.
+ *
+ * Soroban keeps a window and forgets behind it, so both ends matter. `latest`
+ * is where a follower with no history of its own starts; `oldest` is the line
+ * under which a remembered starting point has become a request the node will
+ * refuse.
+ */
+export async function ledgerWindow(rpcUrl, { fetchImpl = fetch } = {}) {
+  const response = await fetchImpl(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getHealth' }),
+  });
+  if (!response.ok) throw new Error(`soroban rpc: ${response.status}`);
+
+  const body = await response.json();
+  if (body.error) throw new Error(`soroban rpc: ${body.error.message}`);
+
+  return { latest: body.result.latestLedger, oldest: body.result.oldestLedger };
+}
+
+/**
  * Reads `Bridged` events out of the Soroban contract.
  *
  * There is no receipt to read on this side — a Stellar transaction does not
@@ -70,6 +92,13 @@ export async function fetchStellarBurns(
   { contractId, cursor = null, startLedger = null, limit = 100, fetchImpl = fetch } = {},
 ) {
   if (!contractId) throw new Error('fetchStellarBurns needs the contract id');
+  if (!cursor && !startLedger) {
+    // Refused here rather than by the node, because the node's answer is
+    // "startLedger must be positive" and the caller's mistake was not passing
+    // one at all — a difference worth a sentence when this is being read out
+    // of a log at four in the morning.
+    throw new Error('fetchStellarBurns needs a cursor or a ledger to start from');
+  }
 
   const params = {
     filters: [{ type: 'contract', contractIds: [contractId] }],

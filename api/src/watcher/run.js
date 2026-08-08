@@ -14,7 +14,7 @@
  */
 
 import { followBridged, latestBlock } from './logs.js';
-import { fetchStellarBurns } from './reverse.js';
+import { fetchStellarBurns, ledgerWindow } from './reverse.js';
 import { sweep } from './index.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,6 +45,19 @@ export async function run({
   let lastFollow = 0;
   let lastReverse = 0;
   let reverseCursor = reverse?.cursor ?? null;
+
+  // Soroban has no "from wherever you are". `getEvents` refuses a request that
+  // names neither a cursor nor a ledger, so the outbound follower needs the
+  // same default the inbound one takes from `latestBlock` above — and without
+  // it every single poll failed, quietly, into the retry log, and no burn
+  // leaving Stellar was ever seen. Clamped to what the node still keeps,
+  // because a start it has forgotten is refused exactly as silently.
+  let reverseFrom = reverse?.startLedger ?? null;
+  if (reverse && !reverseCursor) {
+    const window = await ledgerWindow(reverse.rpcUrl, { fetchImpl });
+    reverseFrom = Math.max(reverseFrom ?? window.latest, window.oldest);
+    log({ event: 'following-out', from: reverseFrom, contract: reverse.contractId });
+  }
 
   while (!signal?.aborted) {
     const now = Date.now();
@@ -78,7 +91,7 @@ export async function run({
         const found = await fetchStellarBurns(reverse.rpcUrl, {
           contractId: reverse.contractId,
           cursor: reverseCursor,
-          startLedger: reverseCursor ? null : reverse.startLedger,
+          startLedger: reverseCursor ? null : reverseFrom,
           fetchImpl,
         });
         for (const burn of found.burns) {

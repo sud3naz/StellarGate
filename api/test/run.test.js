@@ -170,3 +170,134 @@ test('it starts from the tip when given no cursor', async () => {
   const started = events.find((e) => e.event === 'started');
   assert.equal(started.cursor, 45174848, 'no cursor means from here on, not from genesis');
 });
+
+// --- the other direction --------------------------------------------------
+
+const CONTRACT = 'CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR';
+
+/** A node that answers both chains, and records what Soroban was asked. */
+function bothChains({ asked = [], latest = 4026352, oldest = 3905393, events = [] } = {}) {
+  let served = false;
+  return async (_url, init) => {
+    const call = JSON.parse(init.body);
+    if (call.method === 'eth_blockNumber') {
+      return { ok: true, json: async () => ({ result: '0x2b15040' }) };
+    }
+    if (call.method === 'getHealth') {
+      return {
+        ok: true,
+        json: async () => ({ result: { latestLedger: latest, oldestLedger: oldest } }),
+      };
+    }
+    if (call.method === 'getEvents') {
+      asked.push(call.params);
+      const found = served ? [] : events;
+      served = true;
+      return { ok: true, json: async () => ({ result: { events: found, cursor: 'next' } }) };
+    }
+    return { ok: true, json: async () => ({ result: [] }) };
+  };
+}
+
+/**
+ * The outbound follower has to be told where to start.
+ *
+ * Soroban has no "from wherever you are": `getEvents` refuses a request naming
+ * neither a cursor nor a ledger. Nothing supplied one, so every poll failed
+ * into the retry log — six hundred and fifty-one times in one night — and a
+ * burn that left Stellar with a ready attestation sat unclaimed while the page
+ * said the bridge would take care of it.
+ */
+test('the outbound follower starts from the tip rather than from nowhere', async () => {
+  const store = new Store();
+  const controller = new AbortController();
+  const events = [];
+  const asked = [];
+
+  const loop = run({
+    rpc: 'http://node',
+    bridge: BRIDGE,
+    store,
+    cursor: 45174800,
+    followSeconds: 0,
+    sweepSeconds: 0.01,
+    signal: controller.signal,
+    log: (line) => events.push(line),
+    fetchImpl: bothChains({ asked }),
+    reverse: { rpcUrl: 'http://soroban', contractId: CONTRACT, startLedger: null },
+    verifyBurn: async () => null,
+    submitSetup: async () => ({ ok: true }),
+    attest: async () => ({ ready: false }),
+    deliver: async () => ({ ok: true }),
+  });
+
+  await until(() => asked.length > 0, controller);
+  await loop;
+
+  assert.equal(asked[0].startLedger, 4026352, 'the tip, the way the inbound side takes it');
+  assert.ok(
+    events.every((e) => e.event !== 'follow-out-failed'),
+    `the follower failed: ${JSON.stringify(events.find((e) => e.event === 'follow-out-failed'))}`,
+  );
+});
+
+/// A start the node has forgotten is refused exactly as silently as no start.
+test('a starting ledger older than the node keeps is pulled forward', async () => {
+  const store = new Store();
+  const controller = new AbortController();
+  const asked = [];
+
+  const loop = run({
+    rpc: 'http://node',
+    bridge: BRIDGE,
+    store,
+    cursor: 45174800,
+    followSeconds: 0,
+    sweepSeconds: 0.01,
+    signal: controller.signal,
+    fetchImpl: bothChains({ asked }),
+    reverse: { rpcUrl: 'http://soroban', contractId: CONTRACT, startLedger: 1000 },
+    verifyBurn: async () => null,
+    submitSetup: async () => ({ ok: true }),
+    attest: async () => ({ ready: false }),
+    deliver: async () => ({ ok: true }),
+  });
+
+  await until(() => asked.length > 0, controller);
+  await loop;
+
+  assert.equal(asked[0].startLedger, 3905393, 'the oldest it still has, not the one asked for');
+});
+
+/// And a burn out of Stellar becomes work, which is the point of all of it.
+test('a burn leaving Stellar is claimed on the EVM side', async () => {
+  const store = new Store();
+  const controller = new AbortController();
+  const seen = [];
+  const TX_OUT = 'affeb68587137989fcf2970ac0b1abccf3c53d764551a9bd6f1754dcff18241e';
+
+  const loop = run({
+    rpc: 'http://node',
+    bridge: BRIDGE,
+    store,
+    cursor: 45174800,
+    followSeconds: 0,
+    sweepSeconds: 0.01,
+    signal: controller.signal,
+    log: (line) => seen.push(line),
+    fetchImpl: bothChains({ events: [{ txHash: TX_OUT, ledger: 4026272 }] }),
+    reverse: { rpcUrl: 'http://soroban', contractId: CONTRACT },
+    verifyBurn: async () => null,
+    submitSetup: async () => ({ ok: true }),
+    attest: async () => ({ ready: false }),
+    deliver: async () => ({ ok: true }),
+    attestOut: async () => ({ ready: true, message: 'de', attestation: 'ad' }),
+    claim: async () => ({ ok: true, hash: '0xclaimed' }),
+  });
+
+  await until(() => store.get(TX_OUT)?.deliveredAt, controller);
+  await loop;
+
+  assert.equal(store.get(TX_OUT).direction, 'out');
+  assert.equal(store.get(TX_OUT).deliveredAt.stellarTxHash, '0xclaimed');
+});

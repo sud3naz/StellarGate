@@ -6,6 +6,7 @@ import {
   STELLAR_DOMAIN,
   classifyClaimFailure,
   fetchStellarBurns,
+  ledgerWindow,
   reverseStep,
 } from '../src/watcher/reverse.js';
 import { Store } from '../src/watcher/store.js';
@@ -73,6 +74,38 @@ test('a cursor replaces the starting ledger rather than joining it', async () =>
 
   assert.equal(asked.pagination.cursor, 'somewhere');
   assert.equal(asked.startLedger, undefined, 'asking for both is asking for nothing');
+});
+
+/**
+ * Asking with neither is refused here, not by the node.
+ *
+ * The node's answer is "startLedger must be positive", which describes a
+ * malformed number and not the actual mistake — that nobody passed one. Six
+ * hundred lines of that went by unread.
+ */
+test('asking with nowhere to start is refused before the node sees it', async () => {
+  await assert.rejects(
+    () =>
+      fetchStellarBurns('http://rpc', {
+        contractId: CONTRACT,
+        fetchImpl: async () => assert.fail('the node should never have been asked'),
+      }),
+    /cursor or a ledger/,
+  );
+});
+
+test('the ledger window is read from the node rather than assumed', async () => {
+  const window = await ledgerWindow('http://rpc', {
+    fetchImpl: async (_url, init) => {
+      assert.equal(JSON.parse(init.body).method, 'getHealth');
+      return {
+        ok: true,
+        json: async () => ({ result: { latestLedger: 4026352, oldestLedger: 3905393 } }),
+      };
+    },
+  });
+
+  assert.deepEqual(window, { latest: 4026352, oldest: 3905393 });
 });
 
 // --- the claim -----------------------------------------------------------
