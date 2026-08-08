@@ -425,6 +425,27 @@ function renderSides() {
   renderConnects();
 }
 
+/**
+ * Offers the connected wallet's address as the destination, when it is one.
+ *
+ * Only when the wallet is on the receiving end. This filled the field
+ * unconditionally, from the days when the Stellar wallet was always the
+ * destination, so turning the bridge around dropped a `G…` into a box asking
+ * for an `0x…` and then told the user it was not one.
+ *
+ * Left editable either way: an exchange deposit goes to a different address
+ * than the one in the wallet, which is the case the muxed `M…` exists for.
+ */
+function prefillDestination() {
+  if (el.dest.value) return;
+
+  const wallet = walletFor(state.to);
+  if (!wallet) return;
+
+  el.dest.value = wallet.address;
+  checkDestination();
+}
+
 /** Connects, or disconnects, whichever wallet that end needs. */
 function connectSide(side) {
   const family = CHAINS[state[side]]?.family;
@@ -456,6 +477,7 @@ async function connectEvm() {
     el.balance.textContent = String(error?.message ?? error);
   }
   renderSides();
+  prefillDestination();
 
   await readBalance();
   render();
@@ -577,12 +599,7 @@ async function connectStellar() {
     state.stellar = address;
     renderSides();
 
-    // Prefill, but leave it editable: an exchange deposit needs a different
-    // address than the one in the wallet.
-    if (!el.dest.value) {
-      el.dest.value = address;
-      checkDestination();
-    }
+    prefillDestination();
   } catch (error) {
     setStatus('idle');
     setError(error);
@@ -862,6 +879,7 @@ function afterDirectionChange() {
   setStatus('idle');
   renderSides();
   readBalance();
+  prefillDestination();
   checkDestination();
   render();
 }

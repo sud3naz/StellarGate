@@ -250,3 +250,22 @@ test('a direction change does not carry the old address over', () => {
   assert.match(fn, /readBalance\(\)/, 'the balance is on a different chain now');
   assert.match(fn, /renderSides\(\)/, 'and the wallets have swapped sides');
 });
+
+/**
+ * The address offered as the destination has to be one.
+ *
+ * Connecting a Stellar wallet filled the field with its `G…` unconditionally,
+ * from the days when the Stellar wallet was always the receiving end. Turning
+ * the bridge around dropped that into a box asking for an `0x…` and then told
+ * the user it was not one.
+ */
+test('the destination is only prefilled from the wallet receiving it', () => {
+  const source = readFileSync(join(web, 'app.js'), 'utf8');
+
+  assert.match(source, /function prefillDestination\(\)/);
+  const body = source.slice(source.indexOf('function prefillDestination()'));
+  const fn = body.slice(0, body.indexOf('\n}\n'));
+
+  assert.match(fn, /walletFor\(state\.to\)/, 'the receiving end decides, not the wallet');
+  assert.match(fn, /if \(el\.dest\.value\) return/, 'and never over something typed');
+});
