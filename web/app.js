@@ -44,7 +44,7 @@ function watcherOrigin() {
   // Served over https, so this is the deployment and the watcher is the
   // hosted one. It answers on 8788 there, behind Caddy, because 8787 was
   // already taken on that machine.
-  return 'https://stellargate.duckdns.org';
+  return 'https://stellargateapi.duckdns.org';
 }
 
 const CONFIG = {
@@ -64,7 +64,7 @@ const CONFIG = {
   // origin has to be as fixed as the contract address, and it is listed in
   // the CSP for the same reason.
   //
-  // The hosted watcher is at stellargate.duckdns.org, and it is named in
+  // The hosted watcher is at stellargateapi.duckdns.org, and it is named in
   // `connect-src` in vercel.json as well. Serving the page over http still
   // reaches a local one, which is what a second machine on the network needs.
   api: watcherOrigin(),
