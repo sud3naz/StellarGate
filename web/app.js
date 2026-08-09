@@ -134,6 +134,8 @@ const state = {
   balance: null, // BigInt, six decimals
   inspection: null, // from Horizon
   checking: false,
+  /// Set while a transfer is running, so `render` leaves the step panel alone.
+  transferring: false,
 };
 
 // --------------------------------------------------------------------------
@@ -740,7 +742,27 @@ function render() {
                   ? 'Sign the Stellar setup'
                   : 'Bridge to Stellar';
 
-  el.steps.forEach((step, i) => step.classList.toggle('on', ready && i === 0));
+  // Only while nothing is in flight. `render` runs on every keystroke and on
+  // every history redraw, so without this a transfer's progress would be wiped
+  // by an event that has nothing to do with it.
+  if (!state.transferring) showProgress(ready ? 0 : -1);
+}
+
+/**
+ * The four steps, as somewhere you are rather than a list of what happens.
+ *
+ * `completed` is how many are behind you: those go green, the next one is
+ * yellow, the rest stay plain. Passing the count rather than an index means
+ * finishing is `showProgress(4)` and nothing has to special case the end.
+ *
+ * The styles for this existed from the start and nothing drove them, so the
+ * panel lit step one and then said the same thing for the whole transfer.
+ */
+function showProgress(completed) {
+  el.steps.forEach((step, i) => {
+    step.classList.toggle('done', i < completed);
+    step.classList.toggle('on', i === completed);
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -1044,6 +1066,10 @@ async function bridge() {
   const activate = state.inspection?.fundsUser === true;
 
   el.go.disabled = true;
+  state.transferring = true;
+  // An account that can pay its own way has nothing to sign, so step one is
+  // already behind that user rather than something they have to watch.
+  showProgress(activate ? 0 : 1);
   try {
     // 1. The setup, and the user's signature on it. Nothing has been spent at
     //    this point, by them or by us.
@@ -1082,6 +1108,7 @@ async function bridge() {
           address: state.stellar,
         });
       }
+      showProgress(1);
     }
 
     // 2. Approve, then burn. Committed from here.
@@ -1095,6 +1122,7 @@ async function bridge() {
       encodeBridge(amount, recipient, activate, CONFIG.activationFee),
     );
     await waitForReceipt(txHash);
+    showProgress(2);
 
     // 3. Hand it over. The watcher re-reads the burn itself before it spends
     //    anything, so this is a shortcut and not a source of truth, the log
@@ -1106,6 +1134,7 @@ async function bridge() {
       if (posted.status !== 202) throw new Error(posted.body.error || 'the bridge refused it');
       await new Promise((r) => setTimeout(r, 2000));
     }
+    showProgress(3);
 
     history.remember({
       txHash,
@@ -1123,6 +1152,10 @@ async function bridge() {
     setStatus('idle');
     setError(error);
     el.go.disabled = false;
+    // Back to the start rather than frozen halfway: the burn either happened
+    // or it did not, and a step left yellow would claim it is still going.
+    state.transferring = false;
+    render();
   }
 }
 
@@ -1132,6 +1165,8 @@ async function watchDelivery(txHash) {
     if (status === 200 && body.delivered) {
       history.settle(txHash, body.deliveredAt);
       renderHistory();
+      showProgress(4);
+      state.transferring = false;
       setStatus(
         'done',
         `Delivered. <a href="${CONFIG.stellar.explorer}/tx/${body.deliveredAt.stellarTxHash}" target="_blank" rel="noopener">See it on Stellar</a>`,
@@ -1140,6 +1175,11 @@ async function watchDelivery(txHash) {
     }
     await new Promise((r) => setTimeout(r, 3000));
   }
+  // Giving up watching is not the transfer failing, so the last step stays
+  // yellow rather than green. Releasing the flag lets the next thing the user
+  // does reset the panel, instead of leaving it locked on a transfer that is
+  // no longer being followed.
+  state.transferring = false;
   setStatus('done', 'Still waiting on Circle. It will arrive; this page need not stay open.');
 }
 
