@@ -136,6 +136,8 @@ const state = {
   checking: false,
   /// Set while a transfer is running, so `render` leaves the step panel alone.
   transferring: false,
+  /// Which wording the step panel is currently showing, to avoid redrawing it.
+  stepsFor: null,
 };
 
 // --------------------------------------------------------------------------
@@ -745,7 +747,10 @@ function render() {
   // Only while nothing is in flight. `render` runs on every keystroke and on
   // every history redraw, so without this a transfer's progress would be wiped
   // by an event that has nothing to do with it.
-  if (!state.transferring) showProgress(ready ? 0 : -1);
+  if (!state.transferring) {
+    drawSteps(outbound ? 'out' : 'in');
+    showProgress(ready ? 0 : -1);
+  }
 }
 
 /**
@@ -763,6 +768,57 @@ function showProgress(completed) {
     step.classList.toggle('done', i < completed);
     step.classList.toggle('on', i === completed);
   });
+}
+
+/**
+ * What the four steps say, which is not the same thing in both directions.
+ *
+ * Going out there is no account to build and no setup to sign, so the panel
+ * described a flow that was not happening: step three offered to set up a
+ * Stellar account the user already has and is leaving. Each line here is one
+ * transition in the code rather than a stage of a story, so a step going green
+ * means something observable happened.
+ */
+const STEPS = {
+  in: [
+    ['Sign the Stellar setup', 'Costs nothing. Nothing has happened yet if you stop here.'],
+    ['Burn the USDC on Base', 'This is the step that commits your money.'],
+    ['We set up your Stellar account', 'Done while Circle attests, so it costs you no extra wait.'],
+    [
+      'USDC arrives',
+      "Under a minute. Stellar does take Circle's fast transfers, whatever the documentation reads like.",
+    ],
+  ],
+  out: [
+    ['Build the burn', 'We put it together. Nothing is signed and nothing has moved.'],
+    ['Sign the burn in Freighter', 'This is the step that commits your money.'],
+    ['The burn lands on Stellar', "Seconds. Stellar's own finality was never the slow part."],
+    ['We claim it on Base', 'Anyone may call receiveMessage. Somebody has to, so it is us.'],
+  ],
+};
+
+/** Redraws the step wording, and only when the direction has actually changed. */
+function drawSteps(direction) {
+  if (state.stepsFor === direction) return;
+
+  let drew = false;
+  STEPS[direction].forEach(([title, detail], i) => {
+    // A panel that is not there is not worth throwing over: this runs from
+    // `render`, and `render` running is the difference between a page and a
+    // static document.
+    const text = el.steps[i]?.querySelector?.('.t');
+    if (!text) return;
+
+    text.textContent = title;
+    const small = document.createElement('small');
+    small.textContent = detail;
+    text.appendChild(small);
+    drew = true;
+  });
+
+  // Remembered only if it happened, so a panel that arrives late still gets
+  // its words rather than being marked done with the wrong ones.
+  if (drew) state.stepsFor = direction;
 }
 
 // --------------------------------------------------------------------------
@@ -1004,6 +1060,8 @@ async function bridgeOut() {
   const recipient = el.dest.value.trim();
 
   el.go.disabled = true;
+  state.transferring = true;
+  showProgress(0);
   try {
     setStatus('working', 'Preparing the burn…');
     // Stellar carries seven decimals where the EVM side carries six.
@@ -1013,12 +1071,14 @@ async function bridgeOut() {
       recipient,
     });
     if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the burn');
+    showProgress(1);
 
     setStatus('working', 'Sign the burn in Freighter…');
     const xdr = await signWithStellar(state.stellarWallet, built.body.xdr, {
       networkPassphrase: CONFIG.stellar.passphrase,
       address: state.stellar,
     });
+    showProgress(2);
 
     setStatus('working', 'Burning on Stellar…');
     const sent = await fetch(`${CONFIG.stellar.soroban}/`, {
@@ -1033,6 +1093,7 @@ async function bridgeOut() {
     });
     const result = (await sent.json()).result ?? {};
     if (result.status === 'ERROR') throw new Error('the burn was rejected');
+    showProgress(3);
 
     history.remember({
       txHash: result.hash,
@@ -1045,10 +1106,15 @@ async function bridgeOut() {
     renderHistory();
 
     setStatus('done', `Burned. The bridge will claim it on ${CHAINS[state.to].name}.`);
+    // The claim is recorded in the same store the way in uses, under this same
+    // hash, so waiting for it is the same wait.
+    watchDelivery(result.hash);
   } catch (error) {
     setStatus('idle');
     setError(error);
     el.go.disabled = false;
+    state.transferring = false;
+    render();
   }
 }
 
@@ -1167,9 +1233,16 @@ async function watchDelivery(txHash) {
       renderHistory();
       showProgress(4);
       state.transferring = false;
+      // `stellarTxHash` is the store's name for it and it predates the way
+      // out, where the hash it holds is the claim on Base. It is the far side
+      // whichever way you went, so the link has to follow the destination
+      // rather than the name.
+      const arrival = CHAINS[state.to];
+      const explorer =
+        arrival.family === 'stellar' ? CONFIG.stellar.explorer : CONFIG.base.explorer;
       setStatus(
         'done',
-        `Delivered. <a href="${CONFIG.stellar.explorer}/tx/${body.deliveredAt.stellarTxHash}" target="_blank" rel="noopener">See it on Stellar</a>`,
+        `Delivered. <a href="${explorer}/tx/${body.deliveredAt.stellarTxHash}" target="_blank" rel="noopener">See it on ${escapeHtml(arrival.name)}</a>`,
       );
       return;
     }
