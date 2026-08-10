@@ -28,7 +28,7 @@ export function createPulse({ now = () => Date.now() } = {}) {
     // Outbound: Stellar to Base. Null forever when this deployment does not
     // run that direction, which is why it is reported separately rather than
     // folded into one number.
-    reverseCursor: null,
+    reverseLedger: null,
     lastReverseScanAt: null,
     // The most recent failure, kept even after a later success: a follower
     // that recovers every time but fails every other cycle is not healthy,
@@ -43,8 +43,8 @@ export function createPulse({ now = () => Date.now() } = {}) {
       state.cursor = cursor;
       state.lastScanAt = now();
     },
-    scannedReverse(cursor) {
-      state.reverseCursor = cursor;
+    scannedReverse(ledger) {
+      state.reverseLedger = ledger;
       state.lastReverseScanAt = now();
     },
     failed(reason) {
@@ -70,7 +70,7 @@ export function createPulse({ now = () => Date.now() } = {}) {
         cursor: state.cursor,
         secondsSinceScan: sinceScan === null ? null : Math.round(sinceScan / 1000),
         secondsSinceStart: Math.round((at - state.startedAt) / 1000),
-        reverseCursor: state.reverseCursor,
+        reverseLedger: state.reverseLedger,
         secondsSinceReverseScan:
           state.lastReverseScanAt === null
             ? null

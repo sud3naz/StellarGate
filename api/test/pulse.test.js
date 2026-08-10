@@ -81,12 +81,12 @@ test('the outbound direction is tracked separately, not folded in', () => {
 
   // A deployment that runs only one direction must not look broken because
   // the other one never reports.
-  assert.equal(pulse.read().reverseCursor, null);
+  assert.equal(pulse.read().reverseLedger, null);
   assert.equal(pulse.read().secondsSinceReverseScan, null);
   assert.equal(pulse.read().following, true);
 
   pulse.scannedReverse(4_043_726);
-  assert.equal(pulse.read().reverseCursor, 4_043_726);
+  assert.equal(pulse.read().reverseLedger, 4_043_726);
 });
 
 // ---------------------------------------------------------------- /health
