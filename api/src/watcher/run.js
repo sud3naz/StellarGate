@@ -14,7 +14,7 @@
  */
 
 import { followBridged, latestBlock } from './logs.js';
-import { fetchStellarBurns, ledgerWindow } from './reverse.js';
+import { followStellarBurns, ledgerWindow } from './reverse.js';
 import { sweep } from './index.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,16 +47,17 @@ export async function run({
 
   let lastFollow = 0;
   let lastReverse = 0;
-  let reverseCursor = reverse?.cursor ?? null;
 
-  // Soroban has no "from wherever you are". `getEvents` refuses a request that
-  // names neither a cursor nor a ledger, so the outbound follower needs the
-  // same default the inbound one takes from `latestBlock` above, and without
-  // it every single poll failed, quietly, into the retry log, and no burn
-  // leaving Stellar was ever seen. Clamped to what the node still keeps,
-  // because a start it has forgotten is refused exactly as silently.
+  // A ledger number, not a cursor. Soroban hands back a cursor pointing at a
+  // ledger it has not finished indexing, then refuses that same cursor until
+  // the chain reaches it, so carrying one between polls fails about half the
+  // time. {followStellarBurns} has the measurements.
+  //
+  // Soroban has no "from wherever you are", so a follower with no history of
+  // its own still needs somewhere to begin. Clamped to what the node keeps,
+  // because a start it has forgotten is refused exactly as loudly.
   let reverseFrom = reverse?.startLedger ?? null;
-  if (reverse && !reverseCursor) {
+  if (reverse) {
     const window = await ledgerWindow(reverse.rpcUrl, { fetchImpl });
     reverseFrom = Math.max(reverseFrom ?? window.latest, window.oldest);
     log({ event: 'following-out', from: reverseFrom, contract: reverse.contractId });
@@ -93,12 +94,17 @@ export async function run({
     if (reverse && now - lastReverse >= followSeconds * 1000) {
       lastReverse = now;
       try {
-        const found = await fetchStellarBurns(reverse.rpcUrl, {
+        const found = await followStellarBurns(reverse.rpcUrl, {
           contractId: reverse.contractId,
-          cursor: reverseCursor,
-          startLedger: reverseCursor ? null : reverseFrom,
+          fromLedger: reverseFrom,
           fetchImpl,
         });
+        // Falling off the back of the retention window loses ledgers for
+        // good, so it is said out loud rather than absorbed: everything
+        // between where we were and where we resume was never read.
+        if (found.rewound) {
+          log({ event: 'follow-out-rewound', from: reverseFrom, to: found.nextLedger });
+        }
         for (const burn of found.burns) {
           // The recipient is inside the event rather than beside it, and
           // nothing downstream needs it: going out there is no account to
@@ -110,8 +116,11 @@ export async function run({
           });
           log({ event: 'burn-out', txHash: burn.txHash, ledger: burn.ledger });
         }
-        reverseCursor = found.cursor;
-        pulse?.scannedReverse(reverseCursor);
+        reverseFrom = found.nextLedger;
+        // Being caught up is a completed scan, not a missed one. It is the
+        // usual answer on a quiet chain and the pulse has to count it, or a
+        // healthy follower with nothing to do reads as stalled.
+        pulse?.scannedReverse(reverseFrom);
       } catch (error) {
         log({ event: 'follow-out-failed', reason: String(error?.message ?? error) });
         pulse?.failed(error?.message ?? error);
@@ -130,6 +139,6 @@ export async function run({
     await sleep(sweepSeconds * 1000);
   }
 
-  log({ event: 'stopped', cursor: at, reverseCursor });
-  return { cursor: at, reverseCursor };
+  log({ event: 'stopped', cursor: at, reverseLedger: reverseFrom });
+  return { cursor: at, reverseLedger: reverseFrom };
 }

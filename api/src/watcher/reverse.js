@@ -62,6 +62,26 @@ export function classifyClaimFailure(error) {
  * under which a remembered starting point has become a request the node will
  * refuse.
  */
+/**
+ * The node refusing a ledger it has not indexed, or has already forgotten.
+ *
+ * Its own words are `startLedger must be within the ledger range: A - B`, and
+ * it says that whether the request named a startLedger or a cursor, which is
+ * part of why this took so long to read correctly. The bounds are carried
+ * along because they are the node telling us exactly where it can serve from,
+ * which is more useful than a string to match on later.
+ */
+export class NotIndexedYet extends Error {
+  constructor(message, { oldest, latest }) {
+    super(`soroban rpc: ${message}`);
+    this.name = 'NotIndexedYet';
+    this.oldest = oldest;
+    this.latest = latest;
+  }
+}
+
+const NOT_INDEXED = /ledger range:\s*(\d+)\s*-\s*(\d+)/;
+
 export async function ledgerWindow(rpcUrl, { fetchImpl = fetch } = {}) {
   const response = await fetchImpl(rpcUrl, {
     method: 'POST',
@@ -115,16 +135,123 @@ export async function fetchStellarBurns(
   if (!response.ok) throw new Error(`soroban rpc: ${response.status}`);
 
   const body = await response.json();
-  if (body.error) throw new Error(`soroban rpc: ${body.error.message}`);
+  if (body.error) {
+    const range = NOT_INDEXED.exec(body.error.message);
+    if (range) {
+      throw new NotIndexedYet(body.error.message, {
+        oldest: Number(range[1]),
+        latest: Number(range[2]),
+      });
+    }
+    throw new Error(`soroban rpc: ${body.error.message}`);
+  }
 
   const result = body.result ?? {};
+  const burns = (result.events ?? []).map((event) => ({
+    txHash: event.txHash,
+    ledger: event.ledger,
+    contractId: event.contractId,
+  }));
+
   return {
-    burns: (result.events ?? []).map((event) => ({
-      txHash: event.txHash,
-      ledger: event.ledger,
-      contractId: event.contractId,
-    })),
-    cursor: result.cursor ?? result.latestLedger ?? cursor,
+    burns,
+    // Kept because paging within one result set is what it is for, and that
+    // is still needed when a busy range holds more events than `limit`.
+    cursor: result.cursor,
+    // What to ask for next time, and the reason this function grew a second
+    // answer. See {followStellarBurns}: the node's own `latestLedger` is the
+    // furthest it admits to having indexed, so one past it is the first thing
+    // it could not have shown us yet. The cursor is not that number and using
+    // it as though it were is what broke.
+    latestLedger: result.latestLedger ?? null,
+    nextLedger: burns.length
+      ? Math.max(...burns.map((b) => b.ledger)) + 1
+      : (result.latestLedger ?? 0) + 1,
+  };
+}
+
+/**
+ * Follows the contract from a ledger, paging through whatever is there.
+ *
+ * The cursor is for walking one result set, not for holding a place between
+ * polls, and the difference cost 887 refused requests in a day before anyone
+ * looked. Measured against the live testnet node: ask from a ledger, and the
+ * cursor that comes back points at a ledger the node has not finished
+ * indexing, four or five ahead of the `latestLedger` in the very same
+ * response. Send it back and the answer is
+ * `startLedger must be within the ledger range: OLDEST - LATEST`, because the
+ * place it names does not exist yet. Wait for the chain to reach it and the
+ * same cursor is suddenly fine, which is why the follower recovered every
+ * time and failed again every time.
+ *
+ * So the ledger is tracked here rather than delegated to a token the node
+ * will not honour. `latestLedger` is the node's own word for how far it has
+ * indexed, one past it is the first ledger it could be hiding, and asking for
+ * that is either "here is what happened" or "not yet". Both are ordinary.
+ *
+ * @returns {{burns, nextLedger, caughtUp, latestLedger}} `caughtUp` when the
+ *          node has nothing past where we already are. That is a normal
+ *          answer, not a failure, and reporting it as one is what buried a
+ *          real fault under 887 identical lines.
+ */
+export async function followStellarBurns(
+  rpcUrl,
+  { contractId, fromLedger, limit = 100, maxPages = 20, fetchImpl = fetch } = {},
+) {
+  if (!Number.isInteger(fromLedger) || fromLedger < 1) {
+    throw new Error('followStellarBurns needs a ledger to start from');
+  }
+
+  const burns = [];
+  let page;
+  try {
+    page = await fetchStellarBurns(rpcUrl, { contractId, startLedger: fromLedger, limit, fetchImpl });
+  } catch (error) {
+    if (error instanceof NotIndexedYet) {
+      // Behind the retention window is a different problem from ahead of the
+      // tip, and only one of them is waiting. Falling off the back means the
+      // ledgers we wanted are gone for good, so the honest move is to resume
+      // at the oldest the node still holds and say so, rather than asking for
+      // a forgotten ledger forever.
+      if (fromLedger < error.oldest) {
+        return { burns: [], nextLedger: error.oldest, caughtUp: false, latestLedger: error.latest, rewound: true };
+      }
+      return { burns: [], nextLedger: fromLedger, caughtUp: true, latestLedger: error.latest };
+    }
+    throw error;
+  }
+
+  burns.push(...page.burns);
+
+  // A full page means the range held at least as many events as we asked for,
+  // so there may be more of them behind the cursor. This is the one place the
+  // cursor belongs.
+  let pages = 1;
+  while (page.burns.length >= limit && page.cursor && pages < maxPages) {
+    try {
+      page = await fetchStellarBurns(rpcUrl, { contractId, cursor: page.cursor, limit, fetchImpl });
+    } catch (error) {
+      // Paging ran into the tip. Keep what was read and resume from it; the
+      // rest is still there and the next poll will reach it.
+      if (error instanceof NotIndexedYet) break;
+      throw error;
+    }
+    burns.push(...page.burns);
+    pages += 1;
+  }
+
+  const nextLedger = burns.length
+    ? Math.max(...burns.map((b) => b.ledger)) + 1
+    : (page.latestLedger ?? fromLedger - 1) + 1;
+
+  return {
+    burns,
+    // Never go backwards. A node that answers with an older `latestLedger`
+    // than the last one, which load balancers in front of a pool do, would
+    // otherwise replay ledgers already delivered.
+    nextLedger: Math.max(nextLedger, fromLedger),
+    caughtUp: burns.length === 0,
+    latestLedger: page.latestLedger,
   };
 }
 
