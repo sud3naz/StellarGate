@@ -37,6 +37,9 @@ export async function run({
   // The other direction, if this deployment runs it. Its cursor is Soroban's
   // own and opaque, so it is carried rather than computed.
   reverse = null,
+  // Where the loop leaves proof that it is still scanning, for /health to
+  // read. Optional so every existing test calls run() unchanged.
+  pulse = null,
   ...stepDeps
 }) {
   let at = cursor ?? (await latestBlock(rpc, { fetchImpl }));
@@ -79,9 +82,11 @@ export async function run({
           },
         });
         at = result.cursor;
+        pulse?.scanned(at);
       } catch (error) {
         // A node having a bad minute is not a reason to stop watching.
         log({ event: 'follow-failed', reason: String(error?.message ?? error) });
+        pulse?.failed(error?.message ?? error);
       }
     }
 
@@ -106,8 +111,10 @@ export async function run({
           log({ event: 'burn-out', txHash: burn.txHash, ledger: burn.ledger });
         }
         reverseCursor = found.cursor;
+        pulse?.scannedReverse(reverseCursor);
       } catch (error) {
         log({ event: 'follow-out-failed', reason: String(error?.message ?? error) });
+        pulse?.failed(error?.message ?? error);
       }
     }
 

@@ -27,10 +27,28 @@ const json = (status, body) => ({ status, body });
  * @param verifyBurn `(txHash, recipient) => proof | null`, from
  *        {verifyPaidBurn} with the RPC and bridge address bound.
  */
-export function createHandler({ store, verifyBurn, buildSetup = null, buildOutbound = null }) {
+export function createHandler({
+  store,
+  verifyBurn,
+  buildSetup = null,
+  buildOutbound = null,
+  // From {createPulse}, written by the follower loop. Optional: without one
+  // the endpoint answers as it always did, which keeps every existing caller
+  // and test working.
+  pulse = null,
+}) {
   return async function handle({ method, path, body }) {
     if (method === 'GET' && path === '/health') {
-      return json(200, { ok: true, pending: store.pending().length });
+      const base = { ok: true, pending: store.pending().length };
+      if (!pulse) return json(200, base);
+
+      // `ok` now means the follower scanned recently, not merely that this
+      // process answered. Those are different claims, and only the second one
+      // was ever being made: a wedged loop leaves the HTTP side responsive and
+      // the old answer was `{ok: true}` while no burn was being seen at all.
+      const state = pulse.read();
+      const ok = state.following;
+      return json(ok ? 200 : 503, { ...base, ok, watcher: state });
     }
 
     /**

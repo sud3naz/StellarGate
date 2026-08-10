@@ -20,6 +20,7 @@ import { buildSetupFor } from './stellar/setup.js';
 import { buildOutbound as buildOutboundTx } from './stellar/outbound.js';
 import { claimOnEvm, MESSAGE_TRANSMITTER, STELLAR_DOMAIN } from './watcher/reverse.js';
 import { run } from './watcher/run.js';
+import { createPulse } from './watcher/pulse.js';
 
 function required(env, name) {
   const value = env[name];
@@ -154,11 +155,17 @@ export async function main(env = process.env) {
   const parts = assemble(env);
   const controller = new AbortController();
 
+  // Shared between the follower and the health endpoint: one writes, the other
+  // reads. It exists here rather than inside either of them because it is the
+  // only thing they both need to see.
+  const pulse = createPulse();
+
   const server = listen(createHandler({
       store: parts.store,
       verifyBurn: parts.verifyBurn,
       buildSetup: parts.buildSetup,
       buildOutbound: parts.buildOutbound,
+      pulse,
     }), {
     port: parts.port,
     createServer,
@@ -176,7 +183,7 @@ export async function main(env = process.env) {
   const log = (line) => console.log(JSON.stringify({ at: new Date().toISOString(), ...line }));
   log({ event: 'listening', port: parts.port, bridge: parts.bridge });
 
-  await run({ ...parts, signal: controller.signal, log });
+  await run({ ...parts, signal: controller.signal, log, pulse });
 }
 
 // Only when run directly, so importing this for tests starts nothing.
