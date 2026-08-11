@@ -12,6 +12,7 @@ import { Keypair, Networks } from '@stellar/stellar-sdk';
 import { CFG, network } from './config.js';
 import { createHandler, listen } from './server.js';
 import { Store } from './watcher/store.js';
+import { Cursors } from './watcher/cursors.js';
 import { verifyPaidBurn } from './watcher/burn.js';
 import { IRIS, fetchAttestation } from './watcher/attestation.js';
 import { deliver, FORWARDER } from './watcher/deliver.js';
@@ -40,6 +41,10 @@ export function assemble(env = process.env) {
   const passphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
 
   const store = new Store({ path: env.BRIDGE_STORE || './transfers.json' });
+  // Beside the store, and outside the code directory for the same reason it
+  // is: deployment rsyncs `api/` with --delete, so a position kept in there
+  // would be thrown away by the very restarts it exists to survive.
+  const cursors = new Cursors({ path: env.BRIDGE_CURSORS || './cursors.json' });
 
   // Each dependency is the general function with this deployment's facts
   // already bound, so nothing downstream has to know where it is running.
@@ -135,6 +140,7 @@ export function assemble(env = process.env) {
 
   return {
     store,
+    cursors,
     rpc,
     bridge,
     buildOutbound,

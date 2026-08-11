@@ -10,7 +10,7 @@
 
 import { strkeyKind, underlyingAccount } from './strkey.js';
 import { encodeApprove, encodeBridge } from './abi.js';
-import { parseEnvelope, assertOnlyAskingForTrustline } from './envelope.js';
+import { parseEnvelope, assertOnlyAskingForTrustline, assertBurnsYourOwnUsdc } from './envelope.js';
 import { CHAINS, routeStatus, fillChainPicker } from './chains.js';
 import * as history from './history.js';
 import {
@@ -80,6 +80,12 @@ const CONFIG = {
     passphrase: 'Test SDF Network ; September 2015',
     usdcIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
     explorer: 'https://stellar.expert/explorer/testnet',
+
+    // The Soroban side, going out. Pinned here for the same reason the API
+    // origin is: the page checks the burn it is about to sign against this,
+    // and asking the watcher which contract it meant would let a tampered one
+    // name its own and answer its own exam.
+    bridgeContract: 'CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR',
   },
 
   // Mirrors of the contract's constants. If these drift the quote lies, so
@@ -1071,6 +1077,18 @@ async function bridgeOut() {
       recipient,
     });
     if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the burn');
+
+    // Read it before handing it over, the same defence the inbound setup has.
+    // It matters more here: Freighter renders a Soroban call as a contract id
+    // and a blob of arguments, so telling the user to check it themselves is
+    // advice nobody can act on. A tampered watcher could return a call moving
+    // the whole balance somewhere else and it would look identical.
+    assertBurnsYourOwnUsdc(parseEnvelope(built.body.xdr), {
+      user: state.stellar,
+      contractId: CONFIG.stellar.bridgeContract,
+      amount: amount * 10n,
+      recipient,
+    });
     showProgress(1);
 
     setStatus('working', 'Sign the burn in Freighter…');

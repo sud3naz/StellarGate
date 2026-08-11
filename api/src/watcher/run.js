@@ -40,10 +40,18 @@ export async function run({
   // Where the loop leaves proof that it is still scanning, for /health to
   // read. Optional so every existing test calls run() unchanged.
   pulse = null,
+  // Where both positions are remembered across restarts. Optional so every
+  // existing test calls run() unchanged, and absent means the old behaviour:
+  // start at the tip and never mind what happened while we were away.
+  cursors = null,
   ...stepDeps
 }) {
-  let at = cursor ?? (await latestBlock(rpc, { fetchImpl }));
-  log({ event: 'started', cursor: at, bridge });
+  // Saved beats configured. `cursor` is an operator's override and it lives in
+  // an env file, so preferring it would re-seed from the same block on every
+  // restart and quietly undo the saving. To force a rescan, delete the file.
+  const saved = cursors?.get('inbound') ?? null;
+  let at = saved ?? cursor ?? (await latestBlock(rpc, { fetchImpl }));
+  log({ event: 'started', cursor: at, resumed: saved !== null, bridge });
 
   let lastFollow = 0;
   let lastReverse = 0;
@@ -56,11 +64,19 @@ export async function run({
   // Soroban has no "from wherever you are", so a follower with no history of
   // its own still needs somewhere to begin. Clamped to what the node keeps,
   // because a start it has forgotten is refused exactly as loudly.
-  let reverseFrom = reverse?.startLedger ?? null;
+  let reverseFrom = cursors?.get('outbound') ?? reverse?.startLedger ?? null;
   if (reverse) {
     const window = await ledgerWindow(reverse.rpcUrl, { fetchImpl });
+    // Still clamped to the window even when resumed: a position from before a
+    // long outage can be older than anything the node still holds, and asking
+    // for it is refused rather than served.
     reverseFrom = Math.max(reverseFrom ?? window.latest, window.oldest);
-    log({ event: 'following-out', from: reverseFrom, contract: reverse.contractId });
+    log({
+      event: 'following-out',
+      from: reverseFrom,
+      resumed: cursors?.get('outbound') != null,
+      contract: reverse.contractId,
+    });
   }
 
   while (!signal?.aborted) {
@@ -83,6 +99,9 @@ export async function run({
           },
         });
         at = result.cursor;
+        // After the burns above are in the store, never before. Saving first
+        // would move past a burn that was never recorded.
+        cursors?.set('inbound', at);
         pulse?.scanned(at);
       } catch (error) {
         // A node having a bad minute is not a reason to stop watching.
@@ -117,6 +136,7 @@ export async function run({
           log({ event: 'burn-out', txHash: burn.txHash, ledger: burn.ledger });
         }
         reverseFrom = found.nextLedger;
+        cursors?.set('outbound', reverseFrom);
         // Being caught up is a completed scan, not a missed one. It is the
         // usual answer on a quiet chain and the pulse has to count it, or a
         // healthy follower with nothing to do reads as stalled.

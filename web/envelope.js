@@ -35,10 +35,28 @@ const KEY_TYPE_ED25519 = 0;
 const ASSET_TYPE_NATIVE = 0;
 const ASSET_TYPE_CREDIT_ALPHANUM4 = 1;
 
+/// Going the other way, the user signs a Soroban invocation instead. Every
+/// number below was read out of @stellar/stellar-sdk's own xdr enums rather
+/// than from memory, because a parser built on a misremembered discriminant
+/// is a parser that waves the wrong transaction through.
+const INVOKE_HOST_FUNCTION = 24;
+const HOST_FUNCTION_INVOKE_CONTRACT = 0;
+const SCV_I128 = 10;
+const SCV_BYTES = 13;
+const SCV_ADDRESS = 18;
+const SC_ADDRESS_ACCOUNT = 0;
+const SC_ADDRESS_CONTRACT = 1;
+/// The version byte on a `C…` strkey, as `0x30` is on a `G…`.
+const VERSION_CONTRACT = 0x10;
+
 class Reader {
   constructor(bytes) {
     this.bytes = bytes;
     this.at = 0;
+    /// Set when a reader has gone as far as it can safely go, so the caller
+    /// knows the remaining bytes were left unread on purpose rather than by
+    /// a parser that lost its place.
+    this.stopped = null;
   }
 
   take(n) {
@@ -54,9 +72,19 @@ class Reader {
   }
 
   /// XDR has no 64-bit reader in a browser without BigInt gymnastics, and
-  /// nothing here needs the value, only to step over it.
+  /// most of what is read here needs to be stepped over rather than known.
   skip64() {
     this.take(8);
+  }
+
+  /// The outbound burn is the exception: its amount is the whole point of
+  /// checking, so it has to come out as a number and not as eight ignored
+  /// bytes. Big-endian, like everything else in XDR.
+  u64() {
+    const b = this.take(8);
+    let value = 0n;
+    for (const byte of b) value = (value << 8n) | BigInt(byte);
+    return value;
   }
 
   /// Variable-length data is padded out to a four-byte boundary.
@@ -132,6 +160,44 @@ function readMemo(r) {
   throw new SuspiciousSetup(`unreadable memo ${type}`);
 }
 
+/** An `SCAddress`: either a `G…` account or a `C…` contract. */
+function readScAddress(r) {
+  const type = r.u32();
+  if (type === SC_ADDRESS_ACCOUNT) return { kind: 'account', bytes: readAccountId(r) };
+  if (type === SC_ADDRESS_CONTRACT) return { kind: 'contract', bytes: r.take(32) };
+  throw new SuspiciousSetup(`unreadable contract address type ${type}`);
+}
+
+/** An `SCSymbol`, which is how a contract's function name travels. */
+function readSymbol(r) {
+  const length = r.u32();
+  if (length > 32) throw new SuspiciousSetup('that is not a function name');
+  return new TextDecoder().decode(r.padded(length));
+}
+
+/**
+ * One argument of the invocation, in the three shapes a burn is made of.
+ *
+ * Everything else is refused rather than skipped. Skipping an argument type
+ * means not knowing how many bytes it was, and a reader that has lost its
+ * place will happily report an amount read out of the middle of something
+ * else.
+ */
+function readScVal(r) {
+  const type = r.u32();
+  if (type === SCV_ADDRESS) return { kind: 'address', address: readScAddress(r) };
+  if (type === SCV_BYTES) return { kind: 'bytes', bytes: r.padded(r.u32()) };
+  if (type === SCV_I128) {
+    // Int128Parts: a signed high half and an unsigned low one. Amounts here
+    // are small and positive, so the high half being anything but zero is
+    // already wrong, but it is read properly rather than assumed.
+    const hi = BigInt.asIntN(64, r.u64());
+    const lo = r.u64();
+    return { kind: 'i128', value: (hi << 64n) | lo };
+  }
+  throw new SuspiciousSetup(`a burn does not carry an argument of type ${type}`);
+}
+
 function readOperation(r, txSource) {
   const hasSource = r.u32();
   const source = hasSource ? readMuxed(r) : txSource;
@@ -153,6 +219,29 @@ function readOperation(r, txSource) {
     r.skip64(); // limit
     return { type: 'changeTrust', source, asset };
   }
+  if (type === INVOKE_HOST_FUNCTION) {
+    const kind = r.u32();
+    if (kind !== HOST_FUNCTION_INVOKE_CONTRACT) {
+      throw new SuspiciousSetup(
+        'this transaction deploys or uploads a contract rather than calling one. Nothing has been signed.',
+      );
+    }
+    const contract = readScAddress(r);
+    const fn = readSymbol(r);
+    const count = r.u32();
+    if (count > 16) throw new SuspiciousSetup('too many arguments for a burn');
+    const args = [];
+    for (let i = 0; i < count; i += 1) args.push(readScVal(r));
+
+    // The operation ends with its authorisation entries. A burn the user
+    // signs for themselves needs none: their signature on the transaction is
+    // the authorisation. Anything else is a tree of credentials and nested
+    // invocations, and reading it properly is a parser of its own, so the
+    // walk stops instead of guessing at lengths it does not know.
+    const auth = r.u32();
+    if (auth > 0) r.stopped = 'authorisation entries';
+    return { type: 'invokeContract', source, contract, fn, args, auth };
+  }
   throw new SuspiciousSetup(`a setup does not contain operation type ${type}`);
 }
 
@@ -170,7 +259,11 @@ export function parseEnvelope(base64) {
   if (envelopeType !== 2) throw new SuspiciousSetup('not a v1 transaction envelope');
 
   const source = readMuxed(r);
-  r.u32(); // fee
+  // The fee is the ceiling on what this signature can cost. On a Soroban
+  // transaction it also covers the resource fee, so reading it here is what
+  // stops a tampered watcher from attaching an enormous footprint and
+  // draining the XLM the user keeps for their own reserve.
+  const fee = r.u32();
   r.skip64(); // sequence number
   readPreconditions(r);
   readMemo(r);
@@ -180,7 +273,24 @@ export function parseEnvelope(base64) {
   const operations = [];
   for (let i = 0; i < count; i += 1) operations.push(readOperation(r, source));
 
+  // An operation may have read as far as it safely can. Everything the checks
+  // below rely on is already out; what remains cannot move money that the fee
+  // does not bound.
+  if (r.stopped) return { source, fee, operations, unread: r.stopped };
+
   const ext = r.u32();
+  if (ext === 1) {
+    // A prepared Soroban transaction carries its resource footprint here, and
+    // reading it means reading LedgerKeys, which is a great deal of parser for
+    // no gain: nothing after this point can move money that the fee above does
+    // not already bound, and the operation that can has already been read.
+    //
+    // So the walk stops, and says so rather than pretending otherwise. What is
+    // still guaranteed: one operation, its contract, its function, its
+    // arguments, and the fee. What is not: the footprint, the authorisation
+    // entries and the signatures are unread.
+    return { source, fee, operations, unread: 'the resource footprint' };
+  }
   if (ext !== 0) throw new SuspiciousSetup('unreadable transaction extension');
 
   // Signatures follow; their contents do not matter here, only that the rest
@@ -193,7 +303,7 @@ export function parseEnvelope(base64) {
   }
   if (!r.done()) throw new SuspiciousSetup('the envelope has bytes left over');
 
-  return { source, operations };
+  return { source, fee, operations, unread: null };
 }
 
 const sameBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -203,6 +313,118 @@ function accountBytes(address) {
   const decoded = base32Decode(address);
   if (!decoded || decoded.length !== 35) throw new SuspiciousSetup('unreadable address');
   return Uint8Array.from(decoded.slice(1, 33));
+}
+
+/** A `C…` contract id as its raw 32 bytes. */
+function contractBytes(id) {
+  const decoded = base32Decode(id);
+  if (!decoded || decoded.length !== 35 || decoded[0] !== VERSION_CONTRACT) {
+    throw new SuspiciousSetup('unreadable contract id');
+  }
+  return Uint8Array.from(decoded.slice(1, 33));
+}
+
+/// One XLM is ten million stroops. A burn's fee is a rounding error next to
+/// the amount being moved, and this is only here to bound a tampered
+/// footprint, so the ceiling is deliberately generous rather than tight.
+const MAX_FEE_STROOPS = 20_000_000;
+
+/**
+ * Refuses to sign anything but the burn the user asked for.
+ *
+ * The inbound setup has {assertOnlyAskingForTrustline}; this is the same
+ * defence pointed the other way, and it was missing. Going out, the page took
+ * whatever XDR the API returned and handed it straight to Freighter. Freighter
+ * shows a Soroban invocation as a contract id and a blob of arguments, so
+ * "read it before you sign" was advice nobody could follow. A watcher that had
+ * been tampered with could have returned a call moving the user's whole USDC
+ * balance somewhere else and the page would have passed it on without
+ * comment.
+ *
+ * So the page checks: one operation, our contract, the `bridge` function, the
+ * user as the source of their own money, the amount they typed, the recipient
+ * they typed. Anything else is refused before a wallet opens.
+ *
+ * @param amount stroops as a BigInt, in Stellar's seven decimals.
+ * @throws {SuspiciousSetup} with something a person can act on.
+ */
+export function assertBurnsYourOwnUsdc(envelope, { user, contractId, amount, recipient }) {
+  const userBytes = accountBytes(user);
+  const expectedContract = contractBytes(contractId);
+
+  if (!sameBytes(envelope.source, userBytes)) {
+    throw new SuspiciousSetup(
+      'this transaction is drawn on an account that is not yours. Nothing has been signed.',
+    );
+  }
+  if (envelope.fee > MAX_FEE_STROOPS) {
+    throw new SuspiciousSetup(
+      `this transaction would charge ${(envelope.fee / 1e7).toFixed(2)} XLM in fees, ` +
+        'far more than a burn costs. Nothing has been signed.',
+    );
+  }
+  if (envelope.operations.length !== 1) {
+    throw new SuspiciousSetup(
+      `this transaction contains ${envelope.operations.length} operations. ` +
+        'A burn is exactly one. Nothing has been signed.',
+    );
+  }
+
+  const [op] = envelope.operations;
+  if (op.type !== 'invokeContract') {
+    throw new SuspiciousSetup(
+      `this transaction asks your account to perform a ${op.type} rather than a burn. ` +
+        'Nothing has been signed.',
+    );
+  }
+  if (op.contract.kind !== 'contract' || !sameBytes(op.contract.bytes, expectedContract)) {
+    throw new SuspiciousSetup(
+      'this transaction calls a contract that is not the bridge. Nothing has been signed.',
+    );
+  }
+  if (op.fn !== 'bridge') {
+    throw new SuspiciousSetup(
+      `this transaction calls ${op.fn} rather than bridge. Nothing has been signed.`,
+    );
+  }
+  if (op.args.length !== 3) {
+    throw new SuspiciousSetup(
+      `this burn carries ${op.args.length} arguments rather than three. Nothing has been signed.`,
+    );
+  }
+
+  const [from, value, destination] = op.args;
+  if (
+    from.kind !== 'address' ||
+    from.address.kind !== 'account' ||
+    !sameBytes(from.address.bytes, userBytes)
+  ) {
+    throw new SuspiciousSetup(
+      'this burn takes the money from an account that is not yours, which means it is not the ' +
+        'one you asked for. Nothing has been signed.',
+    );
+  }
+  if (value.kind !== 'i128' || value.value !== amount) {
+    const shown = value.kind === 'i128' ? (Number(value.value) / 1e7).toFixed(7) : 'something unreadable';
+    throw new SuspiciousSetup(
+      `this burn is for ${shown} USDC, not the amount you entered. Nothing has been signed.`,
+    );
+  }
+  if (destination.kind !== 'bytes' || !sameBytes(destination.bytes, evmBytes(recipient))) {
+    throw new SuspiciousSetup(
+      'this burn would deliver to a different address than the one you entered. Nothing has been signed.',
+    );
+  }
+
+  return envelope;
+}
+
+/** The twenty raw bytes of an EVM address, for comparing against the argument. */
+function evmBytes(address) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new SuspiciousSetup('unreadable recipient');
+  const out = new Uint8Array(20);
+  for (let i = 0; i < 20; i += 1) out[i] = parseInt(address.slice(2 + i * 2, 4 + i * 2), 16);
+  return out;
 }
 
 /**
