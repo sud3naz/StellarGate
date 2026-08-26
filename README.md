@@ -1,4 +1,4 @@
-# stellar-bridge
+# StellarGate
 
 USDC from the EVM chains into Stellar, arriving in an account that already
 works. Not a cheaper bridge, a front door.
