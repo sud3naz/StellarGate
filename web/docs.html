@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Docs :: Stellar Bridge</title>
+<link rel="icon" href="favicon.svg">
+<style>
+:root{
+  --yellow:#FDDA24;
+  --yellow-deep:#E8C31A;
+  --yellow-wash:#FDF6D8;
+  --beige:#F3ECDD;
+  --beige-deep:#E8DFC9;
+  --paper:#FBF7EF;
+  --card:#FFFDF8;
+  --ink:#171512;
+  --ink-soft:#6A6153;
+  --ink-faint:#9A9184;
+  --line:#DED3BB;
+  --ok:#2E6B4F;
+  --ok-wash:#E4F0E8;
+  --warn:#8A5A12;
+  --warn-wash:#FBEFD5;
+  --radius:14px;
+  --mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font:15px/1.6 ui-sans-serif,-apple-system,'Segoe UI',Inter,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+.wrap{max-width:820px;margin:0 auto;padding:28px clamp(20px,4vw,64px) 64px}
+
+header{display:flex;align-items:center;gap:12px;margin-bottom:30px}
+.mark{
+  width:34px;height:34px;border-radius:9px;flex:none;
+  background:var(--yellow);
+  display:grid;place-items:center;
+}
+.mark svg{display:block}
+.brand{font-weight:640;letter-spacing:-.015em;font-size:17px}
+.brand span{color:var(--ink-faint);font-weight:450}
+.back{
+  margin-left:auto;font-size:13px;font-weight:600;
+  padding:6px 12px;border-radius:999px;text-decoration:none;
+  background:var(--beige);color:var(--ink-soft);border:1px solid var(--line);
+}
+.back:hover{background:var(--beige-deep)}
+
+h1{font-size:26px;letter-spacing:-.02em;line-height:1.2;margin:0 0 6px}
+.lede{color:var(--ink-soft);font-size:16px;margin:0 0 26px}
+
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:0 1px 2px rgba(23,21,18,.04),0 8px 28px -18px rgba(23,21,18,.28);
+  padding:20px 22px;margin-bottom:18px;
+}
+.card h2{
+  font-size:13px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-faint);margin:0 0 12px;
+}
+.card p{margin:0 0 12px}
+.card p:last-child{margin-bottom:0}
+.card b{font-weight:650}
+.card a{color:var(--ink);border-bottom:1px solid var(--line);text-decoration:none}
+.card a:hover{border-bottom-color:var(--ink-faint)}
+
+pre{
+  background:var(--paper);border:1px solid var(--line);border-radius:9px;
+  padding:14px 16px;overflow-x:auto;
+  font-family:var(--mono);font-size:12.5px;line-height:1.55;color:var(--ink);
+  margin:0 0 12px;
+}
+code{font-family:var(--mono);font-size:.92em;background:var(--beige);border-radius:4px;padding:1px 5px}
+pre code{background:none;padding:0}
+
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:0 0 12px}
+th{
+  text-align:left;font-size:11.5px;font-weight:650;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-faint);
+  padding:6px 10px;border-bottom:1px solid var(--line);
+}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.mono{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+
+ul{margin:0 0 12px;padding-left:20px}
+li{margin-bottom:7px}
+li:last-child{margin-bottom:0}
+
+.note{
+  background:var(--warn-wash);border:1px solid var(--line);border-radius:9px;
+  padding:11px 14px;font-size:13.5px;color:var(--warn);margin:0 0 12px;
+}
+.good{
+  background:var(--ok-wash);border:1px solid var(--line);border-radius:9px;
+  padding:11px 14px;font-size:13.5px;color:var(--ok);margin:0 0 12px;
+}
+
+footer{margin-top:26px;font-size:12.5px;line-height:1.6;color:var(--ink-faint)}
+footer a{color:var(--ink-soft)}
+.hairline{height:1px;background:var(--line);margin:18px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="mark" aria-hidden="true">
+      <svg width="19" height="19" viewBox="0 0 19 19" fill="none">
+        <path d="M2 13.5h15M2 5.5h15" stroke="#171512" stroke-width="1.6" stroke-linecap="round"/>
+        <circle cx="9.5" cy="9.5" r="2.6" fill="#171512"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand">Stellar Bridge <span>/ Docs</span></div>
+    </div>
+    <a class="back" href="index.html">&larr; Back to the bridge</a>
+  </header>
+
+  <h1>USDC into an account that works</h1>
+  <p class="lede">Not a cheaper bridge. A front door: the money arrives on
+  Stellar in an account that can already hold it and already spend it.</p>
+
+  <div class="card">
+    <h2>What this is</h2>
+    <p>Circle's <a href="https://developers.circle.com/cctp" rel="noreferrer">CCTP</a>
+    moves native USDC by burning it on the source chain and minting it on the
+    destination. No wrapped tokens, no liquidity pool, no custody. This bridge
+    rides that rail from the EVM chains into Stellar, and then does the part
+    CCTP does not: it makes sure the receiving side is an account that
+    actually works.</p>
+    <p>On Stellar, an address is not an account. Until somebody pays the
+    ledger reserve, the address cannot hold anything; until it has a USDC
+    trustline, it cannot hold USDC; and with zero XLM it cannot even pay the
+    fee to fix either. Someone withdrawing to Stellar for the first time
+    crosses an ordinary bridge and hits that wall with their money already on
+    the other side. This bridge exists so that nobody arrives at it.</p>
+  </div>
+
+  <div class="card">
+    <h2>The fee, and what it buys</h2>
+    <p><b>Everyone pays 0.5%.</b> Only somebody who cannot hold USDC without
+    help pays more: a flat five dollars, which buys three XLM sent to the
+    address outright. One for the account reserve, half for the trustline,
+    and one and a half left over as the user's own fee money.</p>
+    <p>The three XLM are <b>spent, not lent</b>. A sponsored account would
+    have been cheaper for us, but a sponsored account holds zero XLM and
+    cannot pay its own transaction fees: it could receive USDC and then be
+    unable to move it without us signing every step. Three XLM buys
+    independence, and independence is the product.</p>
+    <p>The five dollars is adjustable, because its cost is XLM and its price
+    is dollars, and those drift. Two things keep that honest: a hard ceiling
+    of 20 USDC compiled into the contract, and every caller passing the price
+    they were quoted, so a repricing cannot land on a transaction already in
+    flight.</p>
+    <p><b>We never make anybody a wallet.</b> You make your own in Freighter
+    and hold your own key. What the fee buys, when it is needed, is the
+    account existing on the ledger.</p>
+  </div>
+
+  <div class="card">
+    <h2>How a transfer goes</h2>
+<pre>wallets connected on both ends
+        &#9474;
+        &#9500;&#9472; read Horizon: does the account exist? is the trustline there?
+        &#9474;    decides whether the five dollars applies at all
+        &#9474;
+        &#9500;&#9472; sign the Stellar setup            &#8592; signature first, held
+        &#9474;
+        &#9500;&#9472; burn the USDC on the source chain &#8592; the step that commits money
+        &#9474;
+        &#9500;&#9472; submit the held setup while Circle attests
+        &#9474;
+        &#9492;&#9472; mint on Stellar &#8594; USDC lands in a working account</pre>
+    <p>The signature comes before the burn on purpose. If you walk away
+    before burning, nothing has happened. Once you have burned, the
+    transaction that makes the far side work is already in hand, so there is
+    no state where your money is taken and cannot be delivered.</p>
+    <p>Two invariants are enforced in code rather than described in prose:
+    <b>never burn before the signed setup is in hand</b>, and <b>never send
+    XLM before a burn that paid for it</b>. The spender verifies the burn by
+    reading the receipt on the source chain, not by trusting a flag.</p>
+  </div>
+
+  <div class="card">
+    <h2>Speed</h2>
+    <p>Stellar is widely believed not to take Circle's fast transfers. It
+    does. A burn at the fast finality threshold attested in
+    <b>twenty-nine seconds</b> where hard finality took twenty-five minutes,
+    and Stellar's messenger accepted the unfinalized message. Circle prices
+    the fast path at 1.3 basis points: thirteen cents on a thousand dollars,
+    against a wait no exchange withdrawal survives.</p>
+    <p>There is no version of this worth running at the slower speed, so the
+    choice is not offered. Every burn goes out fast, and the account setup is
+    submitted during the attestation, so it costs no extra wait.</p>
+  </div>
+
+  <div class="card">
+    <h2>What keeps it safe</h2>
+    <ul>
+      <li><b>The address is checked on-chain, checksum included.</b> Stellar
+      cannot tell a typo from an address; the contract decodes the base32 and
+      verifies the CRC16 before anything moves, and a fuzz test asserts that
+      every possible single-character typo is caught.</li>
+      <li><b>The page reads what it asks you to sign.</b> Before Freighter is
+      opened, the setup transaction is decoded in the browser and refused
+      unless every operation drawn on your account is exactly the USDC
+      trustline it should be. An unknown operation type is a refusal, not a
+      shrug.</li>
+      <li><b>A missing trustline is not fatal.</b> The mint reverts if the
+      trustline is not there yet, but the message is not consumed, so it can
+      simply be retried once the trustline exists. Being late costs
+      nothing.</li>
+      <li><b>Exchange deposits work.</b> A muxed <code>M&hellip;</code>
+      address folds the memo id into the address itself, which is how a
+      payment out of a contract reaches an exchange account that expects a
+      memo.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div class="note">Testnet only. Nothing is deployed on mainnet.</div>
+    <p>The full path is deployed on Base Sepolia and proven end to end, in
+    forty seconds, into an address that did not exist when the transfer
+    started. Addresses and transaction hashes are in
+    <a href="https://github.com/sud3naz/StellarGate/blob/main/TESTNET.md" rel="noreferrer">TESTNET.md</a>.</p>
+    <p>The code is open: 250 tests across the Solidity contract, the Soroban
+    contract, the watcher and the browser, checked against Circle's real
+    contracts and test vectors rather than against an interface written from
+    the docs.</p>
+    <div class="good">Source, tests and the full design write-up:
+    <a href="https://github.com/sud3naz/StellarGate" rel="noreferrer">github.com/sud3naz/StellarGate</a></div>
+  </div>
+
+  <div class="card">
+    <h2>Run it yourself</h2>
+    <p>The page and the watcher are two separate things, and both bind every
+    interface, so a second machine on the same network reaches them at this
+    one's address.</p>
+<pre>cd web &amp;&amp; node serve.mjs        # the page, on 5173
+cd api &amp;&amp; npm run watcher       # the service, on 8787</pre>
+    <p>The watcher needs two things: the bridge contract address and the
+    Stellar account that pays for delivery, about 0.0075 XLM a call. It never
+    holds user funds. Everything else has a testnet default.</p>
+<pre>cd api
+BRIDGE_CONTRACT=0x6975&hellip;FF00 \
+BRIDGE_DELIVERY_SECRET=S&hellip; \
+npm run watcher</pre>
+    <p>You can always skip all of this and call CCTP yourself, and pay
+    nothing. This charges for the interface and for the setup on the far
+    side, not for access to the rail.</p>
+  </div>
+
+  <div class="card">
+    <h2>Honest limits</h2>
+    <ul>
+      <li>Bridging <b>out</b> of Stellar delivers USDC on the EVM side but no
+      gas to move it with. The claim is made for you; the gas problem on that
+      side is not solved.</li>
+      <li>Freighter is the only Stellar wallet supported today. Others arrive
+      with the Stellar Wallets Kit, properly, or not at all.</li>
+      <li>Freighter may warn "insufficient funds for fee" when signing the
+      setup. It is wrong: the fee is paid by our channel account, not yours.
+      The page says so before asking.</li>
+      <li>One transfer at a time is what testnet has exercised. The channel
+      account exists precisely for concurrency, and that is the one thing it
+      has not yet been tested against.</li>
+    </ul>
+  </div>
+
+  <footer>
+    <div class="hairline"></div>
+    <p>Questions the docs do not answer are issues:
+    <a href="https://github.com/sud3naz/StellarGate/issues" rel="noreferrer">github.com/sud3naz/StellarGate/issues</a></p>
+  </footer>
+
+</div>
+</body>
+</html>
