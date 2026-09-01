@@ -20,6 +20,8 @@
 
 import { UnpaidBurn } from './watcher/burn.js';
 import { DoublePayment } from './watcher/store.js';
+import { NoFreeChannel } from './stellar/channels.js';
+import { ForeignSetup } from './stellar/verify.js';
 
 const json = (status, body) => ({ status, body });
 
@@ -32,12 +34,38 @@ export function createHandler({
   verifyBurn,
   buildSetup = null,
   buildOutbound = null,
+  // `(setupXdr, recipient) => void`, throwing {ForeignSetup} for anything
+  // this server did not build. Without one, setups are stored as given,
+  // which is fine for a watcher that never signs them and is not fine for
+  // one that does; main.js always supplies one.
+  verifySetup = null,
   // From {createPulse}, written by the follower loop. Optional: without one
   // the endpoint answers as it always did, which keeps every existing caller
   // and test working.
   pulse = null,
+  // From {createLimiter}. Applied to the routes that cost something to
+  // answer, keyed by the caller's address. Optional for the same reason.
+  limiter = null,
 }) {
-  return async function handle({ method, path, body }) {
+  return async function handle({ method, path, body, ip = 'unknown' }) {
+    // The costly routes, before any of them does anything. A refused call
+    // has cost nothing but this lookup.
+    const costly =
+      method === 'POST' && (path === '/setup' || path === '/outbound' || path === '/transfers');
+    if (costly && limiter) {
+      const verdict = limiter.take(ip);
+      if (!verdict.ok) {
+        return json(429, {
+          error:
+            verdict.scope === 'everyone'
+              ? `the bridge is busy; try again in ${verdict.retryAfterSeconds}s`
+              : `too many requests; try again in ${verdict.retryAfterSeconds}s`,
+          retry: true,
+          retryAfterSeconds: verdict.retryAfterSeconds,
+        });
+      }
+    }
+
     if (method === 'GET' && path === '/health') {
       const base = { ok: true, pending: store.pending().length };
       if (!pulse) return json(200, base);
@@ -76,6 +104,11 @@ export function createHandler({
         }
         return json(200, { needed: built.needed, xdr: built.xdr, fundsUser: built.fundsUser });
       } catch (error) {
+        // Every channel is lent out. Not the caller's fault and not
+        // permanent, so it is a 503 with an invitation, not a 400.
+        if (error instanceof NoFreeChannel) {
+          return json(503, { error: error.message, retry: true });
+        }
         return json(400, { error: String(error?.message ?? error) });
       }
     }
@@ -99,6 +132,19 @@ export function createHandler({
       // would mean recording something unverified.
       if (!proof) {
         return json(202, { status: 'pending', retry: true, reason: 'burn not on chain yet' });
+      }
+
+      // The envelope is checked at the door, before it is written down, so
+      // a store full of setups is a store full of setups we built. The
+      // funder checks again before signing; this one is so the refusal
+      // reaches the browser as a sentence rather than as a stalled transfer.
+      if (setupXdr && verifySetup) {
+        try {
+          verifySetup(setupXdr, recipient);
+        } catch (error) {
+          if (error instanceof ForeignSetup) return json(400, { error: error.message });
+          throw error;
+        }
       }
 
       try {
@@ -145,10 +191,15 @@ export function createHandler({
       const transfer = store.get(txHash);
       if (!transfer) return json(404, { error: 'unknown transfer' });
 
+      // No recipient. A burn hash is public, the page remembers its own
+      // recipient, and there is no reason for this to tell anyone who typed a
+      // hash where the money went.
       return json(200, {
         txHash: transfer.txHash,
-        recipient: transfer.recipient,
         hasSetup: Boolean(transfer.setupXdr),
+        // Why the last setup was dropped, if it was. The page reads this as
+        // "ask the user to sign again" and posts the new one to /transfers.
+        setupFailure: transfer.setupFailure ?? null,
         provisioned: transfer.provisioned,
         delivered: Boolean(transfer.deliveredAt),
         deliveredAt: transfer.deliveredAt,
@@ -163,7 +214,29 @@ export function createHandler({
  * A node:http adapter, kept thin on purpose. The routing above is testable
  * without binding a port; this is the part that cannot be.
  */
-export function listen(handle, { port = 8787, createServer, allowOrigin = '*' } = {}) {
+/**
+ * Who is calling, for the rate limit.
+ *
+ * Behind Caddy every connection arrives from Caddy, so the socket address
+ * is useless and the real one is in `x-forwarded-for`, first entry. That
+ * header is only worth reading when a proxy we control is setting it; from
+ * the open internet it is whatever the caller typed. `trustProxy` says which
+ * arrangement this is, and the deployment behind Caddy is the default.
+ */
+export function callerAddress(req, { trustProxy = true } = {}) {
+  if (trustProxy) {
+    const forwarded = req.headers?.['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+      return forwarded.split(',')[0].trim();
+    }
+  }
+  return req.socket?.remoteAddress ?? 'unknown';
+}
+
+export function listen(
+  handle,
+  { port = 8787, createServer, allowOrigin = '*', trustProxy = true } = {},
+) {
   const server = createServer(async (req, res) => {
     // The page and the watcher are different origins whichever way this is
     // arranged, a static host and a service, or a local server on one port
@@ -201,8 +274,11 @@ export function listen(handle, { port = 8787, createServer, allowOrigin = '*' } 
         method: req.method,
         path: url.pathname,
         body: parsed,
+        ip: callerAddress(req, { trustProxy }),
       });
-      res.writeHead(status, { 'content-type': 'application/json' });
+      const headers = { 'content-type': 'application/json' };
+      if (status === 429 && body?.retryAfterSeconds) headers['retry-after'] = String(body.retryAfterSeconds);
+      res.writeHead(status, headers);
       res.end(JSON.stringify(body));
     } catch (error) {
       res.writeHead(500, { 'content-type': 'application/json' });

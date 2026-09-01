@@ -36,15 +36,19 @@ const REAL_LOG = {
     '504d4f364d4941554649585651553545483743484f5a355a0000000000000000',
 };
 
-/** A node that answers with whatever receipt the test wants. */
-function nodeReturning(result) {
-  return async () => ({
-    ok: true,
-    json: async () => ({ jsonrpc: '2.0', id: 1, result }),
-  });
+/**
+ * A node that answers with whatever receipt the test wants, and puts the head
+ * of the chain well past it, so the default confirmation window is met.
+ */
+function nodeReturning(result, { head = '0x1000' } = {}) {
+  return async (_url, init) => {
+    const { method } = JSON.parse(init.body);
+    const answer = method === 'eth_blockNumber' ? head : result;
+    return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: answer }) };
+  };
 }
 
-const SUCCESSFUL_RECEIPT = { status: '0x1', logs: [REAL_LOG] };
+const SUCCESSFUL_RECEIPT = { status: '0x1', blockNumber: '0x100', logs: [REAL_LOG] };
 
 test('decodes a real Bridged log', () => {
   const bridged = decodeBridged(REAL_LOG);
@@ -93,7 +97,7 @@ test('refuses a burn that reverted', async () => {
     verifyPaidBurn('http://node', TX, {
       bridge: BRIDGE,
       expectedRecipient: RECIPIENT,
-      fetchImpl: nodeReturning({ status: '0x0', logs: [] }),
+      fetchImpl: nodeReturning({ status: '0x0', blockNumber: '0x100', logs: [] }),
     }),
     UnpaidBurn,
   );
@@ -111,7 +115,7 @@ test('refuses a Bridged log from somebody else’s contract', async () => {
     verifyPaidBurn('http://node', TX, {
       bridge: BRIDGE,
       expectedRecipient: RECIPIENT,
-      fetchImpl: nodeReturning({ status: '0x1', logs: [impostor] }),
+      fetchImpl: nodeReturning({ status: '0x1', blockNumber: '0x100', logs: [impostor] }),
     }),
     UnpaidBurn,
   );
@@ -137,7 +141,7 @@ test('refuses a transaction with no Bridged log at all', async () => {
     verifyPaidBurn('http://node', TX, {
       bridge: BRIDGE,
       expectedRecipient: RECIPIENT,
-      fetchImpl: nodeReturning({ status: '0x1', logs: [] }),
+      fetchImpl: nodeReturning({ status: '0x1', blockNumber: '0x100', logs: [] }),
     }),
     UnpaidBurn,
   );
@@ -163,4 +167,81 @@ test('refuses a real burn that did not buy an activation', () => {
 test('passes a burn that bought one', () => {
   const proof = { txHash: TX, activate: true };
   assert.equal(assertPaidForActivation(proof), proof);
+});
+
+// --- a receipt is not a burn until the chain has moved on -------------------
+
+/**
+ * On an L2 the receipt is the sequencer's word, given the moment it includes
+ * the transaction, and a block can still be replaced. The setup used to go
+ * out on that word alone. Now the head has to be past the burn by a few
+ * blocks, or by the node's own `safe` or `finalized` mark, before any XLM
+ * moves for it. Until then the answer is "not yet", the same answer a
+ * missing receipt gets, and the caller comes back.
+ */
+test('a burn at the very tip of the chain is not proven yet', async () => {
+  const proof = await verifyPaidBurn('http://node', TX, {
+    bridge: BRIDGE,
+    expectedRecipient: RECIPIENT,
+    fetchImpl: nodeReturning(SUCCESSFUL_RECEIPT, { head: '0x102' }), // two blocks on
+    confirmations: 5,
+  });
+  assert.equal(proof, null, 'wait, rather than spend on a block that may go');
+});
+
+test('a burn five blocks back is proven', async () => {
+  const proof = await verifyPaidBurn('http://node', TX, {
+    bridge: BRIDGE,
+    expectedRecipient: RECIPIENT,
+    fetchImpl: nodeReturning(SUCCESSFUL_RECEIPT, { head: '0x105' }),
+    confirmations: 5,
+  });
+  assert.equal(proof?.activate, true);
+});
+
+test('the safe tag is honoured when asked for', async () => {
+  const asked = [];
+  const node = async (_url, init) => {
+    const { method, params } = JSON.parse(init.body);
+    asked.push(method);
+    let result = SUCCESSFUL_RECEIPT;
+    if (method === 'eth_getBlockByNumber') {
+      assert.equal(params[0], 'safe');
+      result = { number: '0xff' }; // one short of the burn's block
+    }
+    return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result }) };
+  };
+
+  const proof = await verifyPaidBurn('http://node', TX, {
+    bridge: BRIDGE,
+    expectedRecipient: RECIPIENT,
+    fetchImpl: node,
+    confirmations: 'safe',
+  });
+  assert.equal(proof, null, 'the burn is past the safe block, so not yet');
+  assert.ok(asked.includes('eth_getBlockByNumber'));
+});
+
+test('zero confirmations trusts the receipt as given', async () => {
+  const proof = await verifyPaidBurn('http://node', TX, {
+    bridge: BRIDGE,
+    expectedRecipient: RECIPIENT,
+    fetchImpl: nodeReturning(SUCCESSFUL_RECEIPT, { head: '0x100' }),
+    confirmations: 0,
+  });
+  assert.equal(proof?.activate, true);
+});
+
+test('a reverted burn is refused before anybody asks how deep it is', async () => {
+  const asked = [];
+  const node = async (_url, init) => {
+    const { method } = JSON.parse(init.body);
+    asked.push(method);
+    return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: { status: '0x0', blockNumber: '0x100', logs: [] } }) };
+  };
+  await assert.rejects(
+    verifyPaidBurn('http://node', TX, { bridge: BRIDGE, expectedRecipient: RECIPIENT, fetchImpl: node }),
+    UnpaidBurn,
+  );
+  assert.deepEqual(asked, ['eth_getTransactionReceipt']);
 });

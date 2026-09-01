@@ -22,6 +22,7 @@
  */
 
 import { STATES } from '../flow.js';
+import { ForeignSetup } from '../stellar/verify.js';
 import { reverseStep } from './reverse.js';
 
 /**
@@ -52,23 +53,48 @@ export async function step(transfer, deps) {
     // Only take a claim when our XLM is actually at stake. A trustline on an
     // account that pays its own reserve costs a transaction fee, and gating it
     // would be charging a user who never owed anything.
-    if (proof.activate) {
-      const ours = store.claimActivation(transfer.txHash);
-      if (!ours) {
-        // Somebody already spent against this burn. Not an error, a retry
-        // arriving after the work was done, but it must not spend again.
-        store.markProvisioned(transfer.txHash);
-        return { action: 'wait', state: STATES.PROVISIONED, reason: 'already provisioned' };
-      }
-    }
+    //
+    // A claim already held is not a reason to stop. It means an earlier pass
+    // took it and never reported back, a crash between claiming and hearing
+    // from Horizon, and the honest thing is to send the *same* envelope
+    // again: same hash, same sequence number, and a ledger applies that at
+    // most once. What must never happen is a second, different setup going
+    // out against this burn, and the store allows only one to be held.
+    // Marking the transfer provisioned on a held claim, which is what this
+    // used to do, declared an account built on the strength of an attempt
+    // whose outcome nobody knew.
+    if (proof.activate) store.claimActivation(transfer.txHash);
 
-    const result = await submitSetup(transfer.setupXdr, proof);
+    let result;
+    try {
+      result = await submitSetup(transfer.setupXdr, proof);
+    } catch (error) {
+      // The funder refused to sign it: not a setup this server built. It got
+      // into the store somehow, past the door or through the file, and
+      // retrying it is pointless. Drop it, say why, and keep the claim
+      // released, since nothing was spent.
+      if (error instanceof ForeignSetup) {
+        store.dropSetup(transfer.txHash, error.message);
+        return { action: 'setup-refused', state: STATES.BURNED, reason: error.message };
+      }
+      throw error;
+    }
+    const failure = `${(result.operationCodes ?? []).join(',') || result.transactionCode}`;
+
     if (!result.ok && !result.alreadyDone) {
-      return {
-        action: 'retry-setup',
-        state: STATES.BURNED,
-        reason: `setup failed: ${(result.operationCodes ?? []).join(',') || result.transactionCode}`,
-      };
+      if (result.dead) {
+        // The ledger will never take this envelope: its sequence went to
+        // another setup, or its time bound passed. Horizon has already been
+        // asked whether it applied, so nothing was spent. Drop it and let
+        // the page ask the user to sign a fresh one.
+        store.dropSetup(transfer.txHash, failure);
+        return {
+          action: 'setup-dead',
+          state: STATES.BURNED,
+          reason: `setup can never apply (${failure}); a new signature is needed`,
+        };
+      }
+      return { action: 'retry-setup', state: STATES.BURNED, reason: `setup failed: ${failure}` };
     }
     store.markProvisioned(transfer.txHash);
   }

@@ -22,7 +22,7 @@ So the fee is 0.5% and it buys the far side: the trustline is there and the
 user never had to hold XLM.
 
 **Everyone pays 0.5%. Only somebody who cannot hold USDC without our help pays
-more.** That costs five dollars and buys three XLM sent to the address
+more.** That costs three dollars and buys three XLM sent to the address
 outright, one for the account reserve, half for the trustline, and 1.5 left
 over as the user's own fee money.
 
@@ -35,13 +35,13 @@ problem, same three XLM, same fee. The only difference is the operation:
 **We do not make anybody a wallet.** The user makes their own in Freighter and
 holds their own key; nothing here generates or custodies one. A Stellar keypair
 is free and made offline, what does not exist until someone pays for it is the
-*account on the ledger*, and that is the only thing the five dollars buys.
+*account on the ledger*, and that is the only thing the three dollars buys.
 
 Somebody withdrawing from an exchange has an account with XLM in it, pays their
 own half-XLM reserve, and owes us nothing but a signature. That is most of
 them, and it is the whole reason the fee is shaped this way.
 
-That five dollars is adjustable, because its cost is three XLM and its price
+That three dollars is adjustable, because its cost is three XLM and its price
 is dollars, and those drift apart. Two things keep that honest:
 `ACTIVATION_FEE_CEILING` is a constant at 20 USDC, so the fee genuinely cannot
 be raised past it without a redeploy; and every caller passes the price they
@@ -61,7 +61,7 @@ buys independence, and independence is the product.
 Rabby + Freighter connected
         │
         ├─ read Horizon: does the account exist? is there a USDC trustline?
-        │  └─ decides whether the five dollars applies at all
+        │  └─ decides whether the three dollars applies at all
         │
         ├─ Freighter signs the setup                         ← signature first
         │  (held, not submitted)
@@ -106,6 +106,18 @@ Funding only after a paid burn closes the obvious attack. The activation XLM is
 **spent, not lent**, unrecoverable, so an endpoint that creates accounts on
 request costs three XLM per browser tab to drain. `flow.js` gates it twice: on
 a completed burn, and on that burn having carried the fee.
+
+The gate on the burn is not enough on its own, and for a while it was all
+there was. What came back from the browser was stored as given and, once the
+burn checked out, signed by the funder as given, and an envelope is just bytes:
+a burn of six USDC, a `/transfers` carrying "funder pays me everything", and
+the funder would have signed it. So the funder reads the setup before signing,
+in `api/src/stellar/verify.js`: sourced from one of our channels, carrying that
+channel's signature, and one of exactly the three shapes `/setup` builds, with
+our funder as the only payer, the burn's recipient as the only payee and the
+configured XLM as the only amount. Anything else is refused with the reason,
+at the door of `/transfers` so the page hears it, and again at the signature
+so the store is not trusted either.
 
 ## Why the mint recipient is not the user
 
@@ -338,10 +350,12 @@ is not gated behind a fee that user never owed.
 
 ## Open decisions
 
-- **Paying to activate an account that already exists.** Nothing stops a caller
-  passing `activate: true` for a live address; they simply overpay. The
-  frontend has to get this right, and the backend should probably refund rather
-  than pocket it.
+- ~~**Paying to activate an account that already exists.**~~ Settled for the
+  page: `activate` is no longer the page's own reading of Horizon but the
+  watcher's answer from `/setup`, the same code that later decides whether to
+  spend the XLM, so the two cannot disagree. A caller who bypasses the page
+  and passes `activate: true` for a live address still simply overpays; that
+  is their call, and nothing here refunds it.
 - **`MIN_AMOUNT` is 1 USDC**, rising to 6 when activating, so the fee cannot
   exceed the transfer.
 - ~~**Freighter and unfunded accounts.**~~ Settled. Issue #1442 was folded into
@@ -365,6 +379,21 @@ is not gated behind a fee that user never owed.
   recovered on the source side. Nothing found documents a return path to the
   source chain. Worth settling before the watcher's retry policy is written
   around it.
+
+## Stopping it
+
+`StellarBridge` can be paused by its owner. A pause stops new burns and nothing
+else: money already burned has its CCTP message and will be delivered,
+withdrawals and repricing keep working. It exists because the far side is a
+watcher and a funder, either can be down or wrong, and taking the page down
+stops nobody who calls the contract directly. `ReverseBridge` has the same
+switch, plus `set_treasury` and a two-step owner handover (`propose_owner`,
+`accept_ownership`), and it is configured in its constructor rather than by an
+`initialise` call, so there is no moment after deploy in which it has no owner.
+
+The owner on mainnet should be a multisig. The deploy script warns when
+`BRIDGE_OWNER` has no code, because an owner that can pause, reprice and move
+the treasury is a key worth more than one browser.
 
 ## Testing it from another machine
 
@@ -397,7 +426,40 @@ BRIDGE_DELIVERY_SECRET=S… \
 npm run watcher
 ```
 
-`BRIDGE_DELIVERY_SECRET` is the account that pays for `mint_and_forward`, about 0.0075 XLM a call, and it never holds user funds. Everything else has a
+`BRIDGE_DELIVERY_SECRET` is the account that pays for `mint_and_forward`, about 0.0075 XLM a call, and it never holds user funds.
+
+Building setups needs two more: `BRIDGE_FUNDER_SECRET`, the account the
+activation XLM is paid out of, and `BRIDGE_CHANNEL_SECRETS`, a comma-separated
+list of channel accounts. **One channel is one transfer in flight.** A setup
+is signed before the burn and submitted after it, carrying the channel's
+sequence number the whole way, so two users who asked in the same window on a
+single channel were handed the same number, and whichever burned second was
+refused with `tx_bad_seq` having already paid. A channel is reserved for a
+recipient from `/setup` until the setup goes in or its time bound passes, and
+when every channel is held `/setup` answers 503 with `retry: true`. Fund each
+channel with a few XLM for fees; they hold nothing else. `BRIDGE_CHANNEL_SECRET`,
+singular, still works as a pool of one.
+
+A setup the ledger will never take, a sequence number that went to somebody
+else or a time bound that passed, is not retried. The watcher looks the
+transaction's hash up on Horizon first, because a used sequence may have been
+used by that very setup, and if it never applied the setup is dropped, the
+activation goes back to the burn, and `/transfers/:hash` reports
+`setupFailure` so the page can ask the user to sign once more.
+
+A burn is proven, not just seen. The receipt is the sequencer's word and a
+block can still be replaced, so XLM moves only once the head is
+`BRIDGE_BURN_CONFIRMATIONS` blocks past the burn (default 5, about ten seconds
+on Base, inside the attestation window). `safe` or `finalized` name the node's
+own tags instead, at the cost of minutes; `0` trusts the receipt as given.
+
+The routes that cost something, `/setup`, `/outbound` and `/transfers`, are
+rate limited in-process: `BRIDGE_RATE_PER_CALLER` per address per minute
+(default 20) and `BRIDGE_RATE_EVERYONE` for all callers together (default 300),
+which is the one that protects Horizon's per-address budget from a crowd. The
+caller is read from `x-forwarded-for` because Caddy is in front; set
+`BRIDGE_TRUST_PROXY=0` when the watcher faces the network itself. A refusal is
+a 429 with `retryAfterSeconds`. Everything else has a
 testnet default: source RPC, Soroban RPC, Circle's API, the store's path, and
 the port. `BRIDGE_CURSOR` starts the log follower at a given block; without it
 the watcher begins at the tip and does not go looking for history.

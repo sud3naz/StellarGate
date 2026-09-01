@@ -63,8 +63,12 @@ export class Store {
           `burn ${txHash} is already recorded for ${existing.recipient}, not ${recipient}`,
         );
       }
+      // A setup is taken when there is none: the first time, or after the
+      // one before it was dropped as dead. Never over one that is still live,
+      // because two different setups for one burn is two chances to spend.
       if (setupXdr && !existing.setupXdr) {
         existing.setupXdr = setupXdr;
+        existing.setupFailure = null;
         this.#persist();
       }
       return existing;
@@ -77,11 +81,34 @@ export class Store {
       // built for it; `out` is the reverse and needs nothing but the claim.
       direction,
       setupXdr,
+      /// Why the last setup was dropped, so the page can ask for another.
+      setupFailure: null,
       activationClaimed: false,
       provisioned: false,
       deliveredAt: null,
     };
     this.transfers.set(txHash, transfer);
+    this.#persist();
+    return transfer;
+  }
+
+  /**
+   * Throws away a setup the ledger will never take, and hands back the
+   * activation claim with it.
+   *
+   * Only for a setup that is *known* not to have applied: a sequence number
+   * already consumed by somebody else, a time bound passed. Nothing was
+   * spent, so the burn still has its activation to spend, and the next setup
+   * the user signs is the one that gets it. Calling this on a setup that
+   * merely failed to be heard from would be the double payment this store
+   * exists to prevent, which is why {submit} checks Horizon first.
+   */
+  dropSetup(txHash, reason) {
+    const transfer = this.transfers.get(txHash);
+    if (!transfer) throw new DoublePayment(`no record of burn ${txHash}`);
+    transfer.setupXdr = null;
+    transfer.activationClaimed = false;
+    transfer.setupFailure = { reason, at: new Date().toISOString() };
     this.#persist();
     return transfer;
   }

@@ -123,3 +123,35 @@ test('provisioning is remembered so it is not repeated', () => {
   store.markProvisioned(TX);
   assert.equal(store.get(TX).provisioned, true);
 });
+
+test('a dead setup is dropped and the activation handed back', () => {
+  const store = new Store();
+  store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR' });
+  assert.equal(store.claimActivation(TX), true);
+
+  store.dropSetup(TX, 'tx_bad_seq');
+
+  const record = store.get(TX);
+  assert.equal(record.setupXdr, null);
+  assert.equal(record.activationClaimed, false, 'nothing was spent, so nothing is claimed');
+  assert.equal(record.setupFailure.reason, 'tx_bad_seq');
+
+  // The next setup is taken, and the claim can be made once more.
+  store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR-2' });
+  assert.equal(store.get(TX).setupXdr, 'XDR-2');
+  assert.equal(store.get(TX).setupFailure, null);
+  assert.equal(store.claimActivation(TX), true);
+  assert.equal(store.claimActivation(TX), false);
+});
+
+test('a live setup is never replaced by a second one', () => {
+  const store = new Store();
+  store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR' });
+  store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR-2' });
+  assert.equal(store.get(TX).setupXdr, 'XDR', 'two setups for one burn is two chances to spend');
+});
+
+test('dropping a setup nobody recorded is refused', () => {
+  const store = new Store();
+  assert.throws(() => store.dropSetup(TX, 'why'), DoublePayment);
+});

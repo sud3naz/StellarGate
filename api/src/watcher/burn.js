@@ -77,25 +77,54 @@ export function decodeBridged(log) {
   };
 }
 
-async function receipt(rpc, txHash, fetchImpl) {
+async function call(rpc, method, params, fetchImpl) {
   const response = await fetchImpl(rpc, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'eth_getTransactionReceipt',
-      params: [txHash],
-    }),
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
   if (!response.ok) throw new Error(`rpc: ${response.status}`);
 
   const body = await response.json();
   if (body.error) throw new Error(`rpc: ${body.error.message}`);
+  return body.result ?? null;
+}
+
+async function receipt(rpc, txHash, fetchImpl) {
   // Null means the node has not seen it yet. Not a failure and not a success;
   // treating it as either is how a watcher either gives up early or pays out
   // for a transaction that never landed.
-  return body.result ?? null;
+  return call(rpc, 'eth_getTransactionReceipt', [txHash], fetchImpl);
+}
+
+/**
+ * Whether a receipt is far enough behind the chain's head to be relied on.
+ *
+ * A receipt is the node's word that a transaction is in a block, and on an
+ * L2 that word comes from the sequencer the moment it includes it. Blocks
+ * can still be replaced, rarely, and a burn that vanishes after three XLM
+ * left for it is three XLM gone. So a burn is only proven once the head has
+ * moved on by `confirmations` blocks, or, for a named tag, once the block
+ * carrying it is at or behind the node's `safe` or `finalized` block.
+ *
+ * The default is a handful of blocks rather than `safe`, because `safe` on
+ * Base means batched to L1, which is minutes, and the setup has to be in
+ * before Circle's attestation lands, which is under thirty seconds. Ten
+ * seconds of blocks is inside that window and rules out the ordinary
+ * one-block reorganisation.
+ */
+export async function confirmed(rpc, receiptBlock, confirmations, fetchImpl) {
+  if (confirmations === 0 || confirmations === 'latest') return true;
+
+  if (confirmations === 'safe' || confirmations === 'finalized') {
+    const block = await call(rpc, 'eth_getBlockByNumber', [confirmations, false], fetchImpl);
+    if (!block?.number) return false;
+    return receiptBlock <= BigInt(block.number);
+  }
+
+  const head = await call(rpc, 'eth_blockNumber', [], fetchImpl);
+  if (!head) return false;
+  return BigInt(head) - receiptBlock >= BigInt(confirmations);
 }
 
 /**
@@ -106,13 +135,17 @@ async function receipt(rpc, txHash, fetchImpl) {
  * @param bridge            Our contract's address. A `Bridged` log from
  *                          anywhere else is somebody else's event.
  * @param expectedRecipient The Stellar address this transfer is for.
- * @returns The decoded burn, or `null` while the receipt is still pending.
+ * @param confirmations     Blocks the head must have moved past the burn, or
+ *                          `'safe'` / `'finalized'` for the node's own tags.
+ *                          Zero trusts the receipt as given.
+ * @returns The decoded burn, or `null` while the receipt is still pending or
+ *          not yet confirmed.
  * @throws  {UnpaidBurn} when the burn cannot pay for this transfer.
  */
 export async function verifyPaidBurn(
   rpc,
   txHash,
-  { bridge, expectedRecipient, fetchImpl = fetch } = {},
+  { bridge, expectedRecipient, fetchImpl = fetch, confirmations = 5 } = {},
 ) {
   if (!bridge) throw new Error('verifyPaidBurn needs the bridge address');
   if (!expectedRecipient) throw new Error('verifyPaidBurn needs the expected recipient');
@@ -123,6 +156,10 @@ export async function verifyPaidBurn(
   if (BigInt(result.status) !== 1n) {
     throw new UnpaidBurn(`burn ${txHash} reverted`);
   }
+
+  // In a block, but is the block staying? Not an answer yet if not.
+  if (result.blockNumber == null) return null;
+  if (!(await confirmed(rpc, BigInt(result.blockNumber), confirmations, fetchImpl))) return null;
 
   const log = (result.logs || []).find(
     (l) =>

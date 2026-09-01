@@ -53,6 +53,10 @@ pub const MIN_AMOUNT: i128 = 10_000_000;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
+    /// Kept for the number: `initialise` used to exist and could be called
+    /// by anyone who got there first. Configuration now happens in the
+    /// constructor, in the same transaction as the deploy, so there is no
+    /// "first" to race for.
     AlreadyInitialised = 1,
     NotInitialised = 2,
     AmountTooSmall = 3,
@@ -62,6 +66,10 @@ pub enum Error {
     RecipientIsZero = 4,
     AboveCeiling = 5,
     NothingAccrued = 6,
+    /// New burns are stopped. Nothing already burned is affected.
+    Paused = 7,
+    /// The account accepting ownership is not the one it was offered to.
+    NotProposedOwner = 8,
 }
 
 /// What the watcher follows. There is no receipt to read on this side, no
@@ -85,6 +93,9 @@ pub struct Bridged {
 pub enum Key {
     Config,
     Accrued,
+    Paused,
+    /// Who has been offered ownership and has not yet taken it.
+    ProposedOwner,
 }
 
 #[contracttype]
@@ -112,17 +123,22 @@ pub struct ReverseBridge;
 
 #[contractimpl]
 impl ReverseBridge {
-    pub fn initialise(
+    /// Configured at deploy, in the deploy.
+    ///
+    /// This used to be an `initialise` call made after the deploy, by
+    /// whoever made it first, and "whoever" was the problem: the seconds
+    /// between the two transactions were an open window in which anybody
+    /// could name themselves owner and treasury of a contract that was
+    /// about to be pointed at from a website. A constructor runs inside the
+    /// deploy itself, so there is no window and no first.
+    pub fn __constructor(
         env: Env,
         owner: Address,
         treasury: Address,
         usdc: Address,
         messenger: Address,
         destination_domain: u32,
-    ) -> Result<(), Error> {
-        if env.storage().instance().has(&Key::Config) {
-            return Err(Error::AlreadyInitialised);
-        }
+    ) {
         env.storage().instance().set(
             &Key::Config,
             &Config {
@@ -135,7 +151,7 @@ impl ReverseBridge {
             },
         );
         env.storage().instance().set(&Key::Accrued, &0i128);
-        Ok(())
+        env.storage().instance().set(&Key::Paused, &false);
     }
 
     /// What a given amount would burn and cost. One subtraction the user can
@@ -160,6 +176,9 @@ impl ReverseBridge {
     ) -> Result<(i128, i128), Error> {
         from.require_auth();
 
+        if env.storage().instance().get(&Key::Paused).unwrap_or(false) {
+            return Err(Error::Paused);
+        }
         if amount < MIN_AMOUNT {
             return Err(Error::AmountTooSmall);
         }
@@ -254,6 +273,54 @@ impl ReverseBridge {
         }
         cfg.circle_fee_bps = bps;
         env.storage().instance().set(&Key::Config, &cfg);
+        Ok(())
+    }
+
+    /// Stops new burns; nothing already burned is touched. The far side is
+    /// a watcher with an EVM key, and it can be down or wrong, and while it
+    /// is being fixed the honest thing is to stop taking money into it.
+    pub fn pause(env: Env) -> Result<(), Error> {
+        config(&env)?.owner.require_auth();
+        env.storage().instance().set(&Key::Paused, &true);
+        Ok(())
+    }
+
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        config(&env)?.owner.require_auth();
+        env.storage().instance().set(&Key::Paused, &false);
+        Ok(())
+    }
+
+    pub fn paused(env: Env) -> bool {
+        env.storage().instance().get(&Key::Paused).unwrap_or(false)
+    }
+
+    pub fn set_treasury(env: Env, treasury: Address) -> Result<(), Error> {
+        let mut cfg = config(&env)?;
+        cfg.owner.require_auth();
+        cfg.treasury = treasury;
+        env.storage().instance().set(&Key::Config, &cfg);
+        Ok(())
+    }
+
+    /// Ownership moves in two steps, offer and accept, so a typo in the
+    /// offer leaves the contract with its old owner rather than with nobody.
+    pub fn propose_owner(env: Env, proposed: Address) -> Result<(), Error> {
+        config(&env)?.owner.require_auth();
+        env.storage().instance().set(&Key::ProposedOwner, &proposed);
+        Ok(())
+    }
+
+    pub fn accept_ownership(env: Env, who: Address) -> Result<(), Error> {
+        who.require_auth();
+        let proposed: Option<Address> = env.storage().instance().get(&Key::ProposedOwner);
+        if proposed.as_ref() != Some(&who) {
+            return Err(Error::NotProposedOwner);
+        }
+        let mut cfg = config(&env)?;
+        cfg.owner = who;
+        env.storage().instance().set(&Key::Config, &cfg);
+        env.storage().instance().remove(&Key::ProposedOwner);
         Ok(())
     }
 

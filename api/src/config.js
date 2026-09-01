@@ -48,13 +48,14 @@ export const CFG = {
   activationXlm: process.env.BRIDGE_ACTIVATION_XLM || '3',
 
   /**
-   * The setup transaction is signed early and submitted up to twenty minutes
-   * later, while the attestation is pending. If it drew its sequence number
-   * from the sponsor, any other transfer in that window would invalidate it.
-   * So the sequence comes from a channel account instead, and there is one per
-   * transfer in flight.
+   * The setup transaction is signed early and submitted up to forty-five
+   * minutes later. If it drew its sequence number from the sponsor, any other
+   * transfer in that window would invalidate it. So the sequence comes from a
+   * channel account instead, and there has to be one per transfer in flight:
+   * the pool is `BRIDGE_CHANNEL_SECRETS`, comma-separated, read in main.js,
+   * and a channel is reserved for a recipient from `/setup` until the setup
+   * is submitted or its time bound passes. See stellar/channels.js.
    */
-  channels: (process.env.BRIDGE_CHANNELS || '').split(',').filter(Boolean),
 
   /**
    * How long a signed setup stays valid. Stellar has no Fast Transfer, so the

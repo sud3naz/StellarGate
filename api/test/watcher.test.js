@@ -89,15 +89,81 @@ test('running twenty times against one burn submits one setup', async () => {
   assert.equal(calls.setups, 1, 'the claim held');
 });
 
-test('a claim taken elsewhere is not taken again', async () => {
-  const { store, deps, calls } = harness();
+/**
+ * A claim already held means an earlier pass took it and never reported
+ * back, a crash between claiming and hearing from Horizon. The only safe
+ * move is to send the *same* envelope again: same hash, same sequence, and
+ * the ledger applies it at most once. What used to happen here was worse than
+ * either option: the transfer was marked provisioned on the strength of an
+ * attempt whose outcome nobody knew, and delivery then retried forever into
+ * an account that had never been created.
+ */
+test('a claim held by an attempt that never reported back is resubmitted, not assumed', async () => {
+  const sent = [];
+  const { store, deps } = harness({
+    submitSetup: async (xdr) => {
+      sent.push(xdr);
+      return { ok: true };
+    },
+  });
   const transfer = store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR' });
-  store.claimActivation(TX); // somebody else got there first
+  store.claimActivation(TX); // taken, and then the process died
 
   const result = await step(transfer, deps);
 
-  assert.equal(calls.setups, 0, 'it must not spend a second time');
-  assert.equal(result.reason, 'already provisioned');
+  assert.deepEqual(sent, ['XDR'], 'the same bytes, which the ledger takes once');
+  assert.equal(store.get(TX).provisioned, true);
+  assert.equal(result.action, 'delivered');
+});
+
+/**
+ * A setup the ledger will never take, because its sequence number went to
+ * another transfer or its time bound passed, is dropped rather than retried,
+ * and the activation it was going to spend goes back to the burn, so the
+ * next setup the user signs can have it.
+ */
+test('a dead setup is dropped, and the burn keeps its activation', async () => {
+  const { store, deps, calls } = harness({
+    submitSetup: async () => ({ ok: false, dead: true, transactionCode: 'tx_bad_seq' }),
+  });
+  const transfer = store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR' });
+
+  const result = await step(transfer, deps);
+
+  assert.equal(result.action, 'setup-dead');
+  assert.match(result.reason, /tx_bad_seq/);
+  const record = store.get(TX);
+  assert.equal(record.setupXdr, null, 'nothing left to retry');
+  assert.equal(record.provisioned, false, 'and nothing was pretended');
+  assert.equal(record.activationClaimed, false, 'the activation is unspent');
+  assert.match(record.setupFailure.reason, /tx_bad_seq/);
+  assert.equal(calls.deliveries, 0);
+
+  // The page asks the user again and posts the new one, which is taken.
+  store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR-2' });
+  deps.submitSetup = async () => {
+    calls.setups += 1;
+    return { ok: true };
+  };
+  const next = await step(store.get(TX), deps);
+
+  assert.equal(next.action, 'delivered');
+  assert.equal(calls.setups, 1, 'the fresh setup went out once');
+  assert.equal(store.get(TX).setupFailure, null);
+});
+
+/// A dead setup is one Horizon has been asked about. Anything less is a retry.
+test('a refusal that is not final keeps the setup and the claim', async () => {
+  const { store, deps } = harness({
+    submitSetup: async () => ({ ok: false, dead: false, transactionCode: 'tx_insufficient_fee' }),
+  });
+  const transfer = store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR' });
+
+  const result = await step(transfer, deps);
+
+  assert.equal(result.action, 'retry-setup');
+  assert.equal(store.get(TX).setupXdr, 'XDR');
+  assert.equal(store.get(TX).activationClaimed, true);
 });
 
 /**
@@ -285,4 +351,27 @@ test('a pause is waited out', () => {
   const verdict = classifyFailure(new Error('HostError: Error(Contract, #1000)'));
   assert.equal(verdict.retryable, true);
   assert.match(verdict.reason, /paused/i);
+});
+
+/**
+ * The funder's own refusal, for a setup that got into the store without
+ * passing the door. It is dropped like a dead one: nothing was spent, the
+ * activation is unclaimed, and the reason is there to read.
+ */
+test('a setup the funder refuses to sign is dropped, not retried', async () => {
+  const { ForeignSetup } = await import('../src/stellar/verify.js');
+  const { store, deps, calls } = harness({
+    submitSetup: async () => {
+      throw new ForeignSetup('refusing to sign this setup: it pays the wrong person');
+    },
+  });
+  const transfer = store.remember({ txHash: TX, recipient: RECIPIENT, setupXdr: 'THEIRS' });
+
+  const result = await step(transfer, deps);
+
+  assert.equal(result.action, 'setup-refused');
+  assert.equal(store.get(TX).setupXdr, null);
+  assert.equal(store.get(TX).activationClaimed, false);
+  assert.match(store.get(TX).setupFailure.reason, /wrong person/);
+  assert.equal(calls.deliveries, 0);
 });

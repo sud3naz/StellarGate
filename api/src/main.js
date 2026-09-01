@@ -7,7 +7,7 @@
  */
 
 import { createServer } from 'node:http';
-import { Keypair, Networks } from '@stellar/stellar-sdk';
+import { Keypair, Networks, TransactionBuilder } from '@stellar/stellar-sdk';
 
 import { CFG, network } from './config.js';
 import { createHandler, listen } from './server.js';
@@ -18,6 +18,9 @@ import { IRIS, fetchAttestation } from './watcher/attestation.js';
 import { deliver, FORWARDER } from './watcher/deliver.js';
 import { submit } from './stellar/activation.js';
 import { buildSetupFor } from './stellar/setup.js';
+import { ChannelPool } from './stellar/channels.js';
+import { assertSetupIsOurs } from './stellar/verify.js';
+import { createLimiter } from './ratelimit.js';
 import { buildOutbound as buildOutboundTx } from './stellar/outbound.js';
 import { claimOnEvm, MESSAGE_TRANSMITTER, STELLAR_DOMAIN } from './watcher/reverse.js';
 import { run } from './watcher/run.js';
@@ -48,8 +51,25 @@ export function assemble(env = process.env) {
 
   // Each dependency is the general function with this deployment's facts
   // already bound, so nothing downstream has to know where it is running.
+  // How far behind the head a burn must be before XLM moves for it. A number
+  // of blocks, or `safe` / `finalized` for the node's own tags. See
+  // {confirmed} for why the default is blocks and not `safe`.
+  const raw = env.BRIDGE_BURN_CONFIRMATIONS ?? '5';
+  const confirmations = raw === 'safe' || raw === 'finalized' || raw === 'latest' ? raw : Number(raw);
+  if (typeof confirmations === 'number' && !(Number.isInteger(confirmations) && confirmations >= 0)) {
+    throw new Error(`BRIDGE_BURN_CONFIRMATIONS must be a block count, safe, or finalized, not ${raw}`);
+  }
+
   const verifyBurn = (txHash, recipient) =>
-    verifyPaidBurn(rpc, txHash, { bridge, expectedRecipient: recipient });
+    verifyPaidBurn(rpc, txHash, { bridge, expectedRecipient: recipient, confirmations });
+
+  // What one caller, and everybody together, may ask per minute of the
+  // routes that cost something. The second number is the one that protects
+  // Horizon's per-address budget from a crowd.
+  const limiter = createLimiter({
+    perKey: { limit: Number(env.BRIDGE_RATE_PER_CALLER ?? 20), windowMs: 60_000 },
+    global: { limit: Number(env.BRIDGE_RATE_EVERYONE ?? 300), windowMs: 60_000 },
+  });
 
   const attest = (txHash) =>
     fetchAttestation(isTestnet ? IRIS.testnet : IRIS.public, sourceDomain, txHash);
@@ -60,31 +80,83 @@ export function assemble(env = process.env) {
   const funder = env.BRIDGE_FUNDER_SECRET
     ? Keypair.fromSecret(env.BRIDGE_FUNDER_SECRET)
     : null;
-  const channel = env.BRIDGE_CHANNEL_SECRET
-    ? Keypair.fromSecret(env.BRIDGE_CHANNEL_SECRET)
+
+  // Channels, plural. One is one sequence number, and two transfers in
+  // flight at once were being handed the same one. `BRIDGE_CHANNEL_SECRET`
+  // still works as a pool of one, for a deployment that has not caught up.
+  const channelSecrets = (env.BRIDGE_CHANNEL_SECRETS || env.BRIDGE_CHANNEL_SECRET || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const channels = channelSecrets.length
+    ? new ChannelPool(channelSecrets.map((s) => Keypair.fromSecret(s)), {
+        // A hold outliving the transaction it protects is a channel idling;
+        // one ending sooner is the collision the pool exists to prevent.
+        holdSeconds: CFG.setupTimeoutSeconds,
+      })
     : null;
 
-  const submitSetup = (signedXdr, paidBurn) =>
-    submit(chosen.horizon, signedXdr, {
+  // What the funder may sign: a setup this server built, and nothing else.
+  // Bound here so both callers, the door and the signing, check the same
+  // thing against the same channels, funder, asset and amount.
+  const verifySetup =
+    channels && funder
+      ? (setupXdr, recipient) =>
+          assertSetupIsOurs(setupXdr, {
+            networkPassphrase: passphrase,
+            recipient,
+            channelAccounts: channels.signers.map((s) => s.publicKey()),
+            funderAddress: funder.publicKey(),
+            asset: chosen.usdc,
+            startingXlm: CFG.activationXlm,
+          })
+      : null;
+
+  const submitSetup = async (signedXdr, paidBurn) => {
+    // Checked again here, at the signature, not only at the door. The store
+    // is a file on disk and the door is one HTTP handler; the funder's key
+    // trusts neither.
+    if (verifySetup) verifySetup(signedXdr, paidBurn?.stellarRecipient);
+
+    const result = await submit(chosen.horizon, signedXdr, {
       networkPassphrase: passphrase,
       paidBurn,
       funderSigner: funder,
     });
+    // Whatever Horizon said, this envelope is either applied or dead to the
+    // sequence it carried, and the channel is free to be lent again. A retry
+    // of the same envelope needs no reservation: its sequence is already
+    // inside it.
+    if (channels && (result.ok || result.alreadyDone || result.dead)) {
+      channels.releaseAccount(TransactionBuilder.fromXDR(signedXdr, passphrase).source);
+    }
+    return result;
+  };
 
   const buildSetup =
-    channel && funder
-      ? (recipient, { amount } = {}) =>
-          buildSetupFor(recipient, {
-            horizon: chosen.horizon,
-            asset: chosen.usdc,
-            networkPassphrase: passphrase,
-            channelSigner: channel,
-            funderAddress: funder.publicKey(),
-            startingXlm: CFG.activationXlm,
-            timeoutSeconds: CFG.setupTimeoutSeconds,
-            baseFee: CFG.baseFee,
-            amount,
-          })
+    channels && funder
+      ? async (recipient, { amount } = {}) => {
+          const channel = channels.reserve(recipient);
+          try {
+            const built = await buildSetupFor(recipient, {
+              horizon: chosen.horizon,
+              asset: chosen.usdc,
+              networkPassphrase: passphrase,
+              channelSigner: channel,
+              funderAddress: funder.publicKey(),
+              startingXlm: CFG.activationXlm,
+              timeoutSeconds: CFG.setupTimeoutSeconds,
+              baseFee: CFG.baseFee,
+              amount,
+            });
+            // Nothing to sign means nothing holding a sequence number.
+            if (!built) channels.release(recipient);
+            return built;
+          } catch (error) {
+            channels.release(recipient);
+            throw error;
+          }
+        }
       : null;
 
   const deliverMessage = (message, attestation) =>
@@ -143,6 +215,10 @@ export function assemble(env = process.env) {
     cursors,
     rpc,
     bridge,
+    channels,
+    verifySetup,
+    limiter,
+    confirmations,
     buildOutbound,
     reverse,
     attestOut,
@@ -171,10 +247,15 @@ export async function main(env = process.env) {
       verifyBurn: parts.verifyBurn,
       buildSetup: parts.buildSetup,
       buildOutbound: parts.buildOutbound,
+      verifySetup: parts.verifySetup,
+      limiter: parts.limiter,
       pulse,
     }), {
     port: parts.port,
     createServer,
+    // Behind Caddy, which sets x-forwarded-for. Set to 0 when the watcher
+    // faces the network directly, or the header is the caller's to write.
+    trustProxy: env.BRIDGE_TRUST_PROXY !== '0',
   });
 
   const stop = () => {

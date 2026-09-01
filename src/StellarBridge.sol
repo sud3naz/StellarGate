@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -63,7 +64,7 @@ interface ITokenMessengerV2 {
  * interface and for the account setup on the far side, not for access to the
  * rail.
  */
-contract StellarBridge is Ownable2Step, ReentrancyGuard {
+contract StellarBridge is Ownable2Step, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     /// @notice Service fee, fixed at compile time so it cannot be quietly
@@ -79,7 +80,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      *
      * The fee below it moves because its cost is denominated in XLM while the
      * fee is denominated in USDC, and those drift apart. This bounds that
-     * drift at four times the starting price. Past it the answer is to send
+     * drift at roughly seven times the starting price. Past it the answer is to send
      * less XLM, three is generous, and about 1.6 is the functional minimum, * not to charge more.
      */
     uint256 public constant ACTIVATION_FEE_CEILING = 20e6; // 20 USDC
@@ -172,7 +173,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
      * states the price they accepted, so it cannot be moved out from under a
      * transaction already in the mempool.
      */
-    uint256 public activationFee = 5e6; // 5 USDC
+    uint256 public activationFee = 3e6; // 3 USDC
 
     /**
      * @notice What Circle is authorised to take out of a burn, in basis
@@ -237,7 +238,7 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
         string calldata stellarRecipient,
         bool activate,
         uint256 acceptedActivationFee
-    ) external nonReentrant returns (uint256 net, uint256 fee) {
+    ) external nonReentrant whenNotPaused returns (uint256 net, uint256 fee) {
         uint256 activation = activate ? activationFee : 0;
         if (activate && activation > acceptedActivationFee) {
             revert ActivationFeeChanged(activation, acceptedActivationFee);
@@ -273,8 +274,21 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
             // so it is Circle's forwarder, which then pays the hook address.
             forwarder,
             address(usdc),
-            // Zero: anyone may trigger the mint, so nobody can hold it hostage.
-            bytes32(0),
+            // The forwarder again, and not zero. This used to be zero so that
+            // "anyone may trigger the mint", and that is exactly the problem:
+            // with no destination caller, anyone can present the attested
+            // message to Stellar's MessageTransmitter directly, skipping the
+            // forwarder. The USDC then mints *into* the forwarder contract,
+            // the nonce is consumed, and the hook that pays the user never
+            // runs. The forwarder has no way to move tokens it was not asked
+            // to forward, so that money is gone. Circle's Stellar reference
+            // says both fields must be the forwarder for this reason.
+            //
+            // Naming the forwarder here means only the forwarder may receive
+            // the message, which it does inside `mint_and_forward`, and that
+            // function is permissionless, so nobody can hold a delivery
+            // hostage either.
+            forwarder,
             circleFee,
             FINALITY_FAST,
             _hookData(stellarRecipient)
@@ -294,6 +308,27 @@ contract StellarBridge is Ownable2Step, ReentrancyGuard {
         accruedFees -= amount;
         usdc.safeTransfer(treasury, amount);
         emit FeesWithdrawn(treasury, amount);
+    }
+
+    /**
+     * @notice Stops new burns. Nothing already burned is affected: the CCTP
+     * message exists, the attestation will come, and delivery is a call on
+     * Stellar that this contract never makes. What a pause stops is *more*
+     * money entering a pipe whose far end is not working.
+     *
+     * The far end is a watcher and a funder, and either can be down, empty,
+     * or wrong. Without this, the only way to stop burns while that is
+     * being fixed was to take the page down, which stops nobody who calls
+     * the contract directly. Withdrawals and repricing keep working while
+     * paused; the owner's hands are not tied, only the users' money is kept
+     * out of harm's way.
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     function setTreasury(address treasury_) external onlyOwner {

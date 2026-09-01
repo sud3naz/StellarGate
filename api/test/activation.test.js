@@ -295,3 +295,82 @@ test('refuses to submit blind', async () => {
     /passphrase/,
   );
 });
+
+// --- a setup the ledger will never take -----------------------------------
+
+/**
+ * `tx_bad_seq` is what a setup gets when its channel's sequence number went
+ * to somebody else. It is also what our own setup gets when it was submitted
+ * once, the answer was lost, and it is submitted again. The two look the
+ * same from Horizon's refusal and mean the opposite, so the hash is looked up
+ * before anything is called dead.
+ */
+test('a sequence number lost to another transfer makes the setup dead', async () => {
+  const result = await submit('https://horizon.example', trustlineXdr(), {
+    networkPassphrase: passphrase,
+    fetchImpl: async (url) => {
+      if (url.includes('/transactions/')) return { ok: false, status: 404, json: async () => ({}) };
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ extras: { result_codes: { transaction: 'tx_bad_seq', operations: [] } } }),
+      };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.dead, true, 'no retry of these bytes can ever apply');
+  assert.equal(result.alreadyDone, false);
+  assert.match(result.hash, /^[0-9a-f]{64}$/);
+});
+
+test('a sequence number used by this very setup means it is done, not dead', async () => {
+  const xdr = trustlineXdr();
+  const expectedHash = TransactionBuilder.fromXDR(xdr, passphrase).hash().toString('hex');
+  let asked = null;
+
+  const result = await submit('https://horizon.example', xdr, {
+    networkPassphrase: passphrase,
+    fetchImpl: async (url) => {
+      if (url.includes('/transactions/')) {
+        asked = url.split('/transactions/')[1];
+        return { ok: true, status: 200, json: async () => ({ successful: true }) };
+      }
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ extras: { result_codes: { transaction: 'tx_bad_seq', operations: [] } } }),
+      };
+    },
+  });
+
+  assert.equal(asked, expectedHash, 'Horizon was asked about exactly this envelope');
+  assert.equal(result.alreadyDone, true);
+  assert.equal(result.dead, false);
+});
+
+test('a time bound that has passed is dead too', async () => {
+  const result = await submit('https://horizon.example', trustlineXdr(), {
+    networkPassphrase: passphrase,
+    fetchImpl: async (url) => {
+      if (url.includes('/transactions/')) return { ok: false, status: 404, json: async () => ({}) };
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ extras: { result_codes: { transaction: 'tx_too_late', operations: [] } } }),
+      };
+    },
+  });
+  assert.equal(result.dead, true);
+});
+
+test('an underfunded funder is not dead, because the same bytes can go again', async () => {
+  const result = await submit('https://horizon.example', trustlineXdr(), {
+    networkPassphrase: passphrase,
+    fetchImpl: response(
+      { extras: { result_codes: { transaction: 'tx_failed', operations: ['op_underfunded'] } } },
+      400,
+    ),
+  });
+  assert.equal(result.dead, false);
+});

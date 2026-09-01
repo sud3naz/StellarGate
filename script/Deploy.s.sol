@@ -46,6 +46,15 @@ contract Deploy is Script {
         require(messenger.code.length > 0, "BRIDGE_MESSENGER has no code");
         require(forwarder != bytes32(0), "BRIDGE_FORWARDER is zero");
 
+        // The owner can pause the bridge, reprice activation, move the
+        // treasury and withdraw fees. On mainnet that is a Safe, not a key
+        // in somebody's browser. An EOA has no code; a Safe does. This is a
+        // warning rather than a refusal because testnet is allowed to be
+        // sloppy and the same script deploys both.
+        if (owner.code.length == 0) {
+            console2.log("WARNING: BRIDGE_OWNER is an externally owned account. Use a multisig on mainnet.");
+        }
+
         console2.log("owner    ", owner);
         console2.log("treasury ", treasury);
         console2.log("usdc     ", usdc);

@@ -88,13 +88,49 @@ const CONFIG = {
     bridgeContract: 'CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR',
   },
 
-  // Mirrors of the contract's constants. If these drift the quote lies, so
-  // they are read back from the contract once one is deployed.
+  // Starting values for the contract's numbers, replaced by what the contract
+  // itself says the moment a wallet is connected, see {readContractNumbers}.
+  // The activation fee in particular is the owner's to move, and a page that
+  // remembered an old price would quote it and then have every burn revert
+  // with ActivationFeeChanged.
   feeBps: 50n,
   bpsDenom: 10_000n,
   activationFee: 3_000_000n, // 3 USDC, six decimals
   minAmount: 1_000_000n,
 };
+
+/// keccak256("activationFee()")[0:4] and keccak256("MIN_AMOUNT()")[0:4],
+/// checked with `cast sig`.
+const ACTIVATION_FEE_SELECTOR = '0x77d630ae';
+const MIN_AMOUNT_SELECTOR = '0xddbcb5fa';
+
+/**
+ * Asks the contract what it charges, so the quote and the fee the burn
+ * carries are the contract's numbers and not this file's memory of them.
+ * A read that fails leaves the starting values in place and says so in the
+ * console; the burn still passes the price it quoted, so the worst case is a
+ * revert, never an overcharge.
+ */
+async function readContractNumbers() {
+  if (!state.evmProvider) return;
+  const read = async (data) =>
+    BigInt(
+      await state.evmProvider.request({
+        method: 'eth_call',
+        params: [{ to: CONFIG.bridge, data }, 'latest'],
+      }),
+    );
+  try {
+    const [activationFee, minAmount] = await Promise.all([
+      read(ACTIVATION_FEE_SELECTOR),
+      read(MIN_AMOUNT_SELECTOR),
+    ]);
+    CONFIG.activationFee = activationFee;
+    CONFIG.minAmount = minAmount;
+  } catch (error) {
+    console.warn('could not read the contract\'s fees, quoting the defaults', error);
+  }
+}
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -177,6 +213,18 @@ function quote(amount, activate) {
 // Horizon: what does this address need
 // --------------------------------------------------------------------------
 
+let reserveCache = null;
+async function baseReserve() {
+  if (reserveCache && reserveCache.until > Date.now()) return reserveCache.value;
+  const response = await fetch(`${CONFIG.stellar.horizon}/ledgers?order=desc&limit=1`);
+  if (!response.ok) throw new Error(`Horizon returned ${response.status}`);
+  const body = await response.json();
+  const stroops = body?._embedded?.records?.[0]?.base_reserve_in_stroops;
+  if (typeof stroops !== 'number') throw new Error('Horizon returned no base reserve');
+  reserveCache = { value: BigInt(stroops), until: Date.now() + 5 * 60 * 1000 };
+  return reserveCache.value;
+}
+
 async function inspect(address) {
   const account = underlyingAccount(address);
   const response = await fetch(`${CONFIG.stellar.horizon}/accounts/${account}`);
@@ -191,8 +239,11 @@ async function inspect(address) {
   if (line) return { needs: 'nothing', fundsUser: false, limit: line.limit, balance: line.balance };
 
   // An existing account pays its own trustline reserve, if it can afford one.
+  // The reserve is a network parameter the watcher reads off Horizon; read
+  // it the same way here, or the two can disagree about who pays exactly
+  // where it costs money.
   const native = (body.balances || []).find((b) => b.asset_type === 'native');
-  const reserve = 5_000_000n; // 0.5 XLM in stroops
+  const reserve = await baseReserve();
   const subentries = BigInt(body.subentry_count ?? 0);
   const sponsoring = BigInt(body.num_sponsoring ?? 0);
   const sponsored = BigInt(body.num_sponsored ?? 0);
@@ -492,7 +543,7 @@ async function connectEvm() {
   renderSides();
   prefillDestination();
 
-  await readBalance();
+  await Promise.all([readBalance(), readContractNumbers()]);
   render();
 }
 
@@ -1141,29 +1192,36 @@ async function bridge() {
 
   const amount = parseUsdc(el.amount.value);
   const recipient = el.dest.value.trim();
-  // The same question the quote asks, asked the same way. These were two
-  // expressions for one thing, the quote read `fundsUser`, this read "needs
-  // anything at all", and they disagreed exactly where it costs money. An
-  // account that exists and can pay its own trustline reserve needs no
-  // activation; one was shown "Account activation 0.00" and charged three
-  // dollars for one it neither needed nor received.
-  const activate = state.inspection?.fundsUser === true;
 
   el.go.disabled = true;
   state.transferring = true;
-  // An account that can pay its own way has nothing to sign, so step one is
-  // already behind that user rather than something they have to watch.
-  showProgress(activate ? 0 : 1);
+  showProgress(0);
   try {
     // 1. The setup, and the user's signature on it. Nothing has been spent at
     //    this point, by them or by us.
-    let setupXdr = null;
-    if (activate) {
-      setStatus('working', 'Preparing the Stellar setup…');
-      const built = await api('/setup', { recipient });
-      if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the setup');
+    //
+    // Whether this transfer pays for an activation is the watcher's call,
+    // not this page's. The page reads Horizon to show a quote, and the
+    // watcher reads Horizon to decide whether its XLM leaves, and when those
+    // two readings differed the user paid for an activation the watcher then
+    // refused to make, or was quoted none and asked to sign for one. So the
+    // burn carries the watcher's answer: `fundsUser` from the same `/setup`
+    // that built what the user is about to sign. A caller who bypasses this
+    // page and passes `activate: true` for a live account simply overpays.
+    setStatus('working', 'Checking what the destination needs…');
+    const built = await api('/setup', { recipient });
+    if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the setup');
+    // The watcher's reading replaces the page's, and the quote is redrawn
+    // from it, so what is charged and what is shown are one reading.
+    state.inspection = { ...(state.inspection ?? {}), fundsUser: built.body.fundsUser === true };
+    render();
+    const activate = state.inspection?.fundsUser === true;
+    // An account that can pay its own way has nothing to sign, so step one is
+    // already behind that user rather than something they have to watch.
+    showProgress(activate ? 0 : 1);
 
-      if (built.body.xdr) {
+    let setupXdr = null;
+    if (built.body.xdr) {
         // Read it before handing it over. The setup is built on the server, // a page cannot know the channel's sequence number, so this is the
         // check that a tampered watcher cannot ask for a payment and have it
         // signed. Freighter would show it; this refuses before Freighter is
@@ -1191,9 +1249,12 @@ async function bridge() {
           networkPassphrase: CONFIG.stellar.passphrase,
           address: state.stellar,
         });
-      }
       showProgress(1);
     }
+
+    // The price the user saw is the price the burn carries; the contract
+    // reverts rather than charge more if the owner repriced in between.
+    await readContractNumbers();
 
     // 2. Approve, then burn. Committed from here.
     setStatus('working', 'Approving USDC…');
@@ -1231,7 +1292,7 @@ async function bridge() {
     renderHistory();
 
     setStatus('done', 'Burned. Watching for delivery…');
-    watchDelivery(txHash);
+    watchDelivery(txHash, { recipient, activate });
   } catch (error) {
     setStatus('idle');
     setError(error);
@@ -1243,9 +1304,66 @@ async function bridge() {
   }
 }
 
-async function watchDelivery(txHash) {
+/**
+ * Builds a fresh setup for a burn whose last one the ledger refused for good,
+ * and asks the user to sign it.
+ *
+ * The setup is signed before the burn and carries a channel's sequence
+ * number until it is submitted. If that number went to another transfer in
+ * between, the held transaction can never apply, and nothing on the server
+ * can replace it: the user's signature is the one thing only the user has.
+ * So the watcher drops it, says why, and this asks once more. The burn is
+ * already paid for; only the signature is being collected again.
+ */
+async function resignSetup(txHash, recipient) {
+  setStatus(
+    'warn',
+    '<b>One more signature, please.</b><span class="sub">The setup you signed earlier ' +
+      'could not be used, because another transfer took its place in the queue. Your ' +
+      'USDC is safe; signing again lets us finish.</span>',
+  );
+  const built = await api('/setup', { recipient });
+  if (built.status === 503 && built.body.retry) return null; // every channel busy, try later
+  if (built.status !== 200) throw new Error(built.body.error || 'could not prepare the setup');
+  if (!built.body.xdr) return null; // nothing to sign any more; the account got set up meanwhile
+
+  assertOnlyAskingForTrustline(parseEnvelope(built.body.xdr), {
+    user: recipient,
+    assetCode: 'USDC',
+    issuer: CONFIG.stellar.usdcIssuer,
+  });
+  const setupXdr = await signWithStellar(state.stellarWallet, built.body.xdr, {
+    networkPassphrase: CONFIG.stellar.passphrase,
+    address: state.stellar,
+  });
+  const posted = await api('/transfers', { txHash, recipient, setupXdr });
+  if (posted.status !== 200) throw new Error(posted.body.error || 'the bridge refused it');
+  setStatus('done', 'Signed again. Watching for delivery…');
+  return setupXdr;
+}
+
+async function watchDelivery(txHash, { recipient = null, activate = false } = {}) {
   for (let i = 0; i < 120; i += 1) {
     const { status, body } = await api(`/transfers/${txHash}`);
+
+    // The watcher dropped the setup as one the ledger will never take. Only
+    // the user can replace it, and they are still here.
+    if (
+      status === 200 &&
+      activate &&
+      recipient &&
+      body.setupFailure &&
+      !body.hasSetup &&
+      !body.provisioned &&
+      !body.delivered
+    ) {
+      try {
+        await resignSetup(txHash, recipient);
+      } catch (error) {
+        setError(error);
+      }
+    }
+
     if (status === 200 && body.delivered) {
       history.settle(txHash, body.deliveredAt);
       renderHistory();

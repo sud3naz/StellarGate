@@ -189,7 +189,41 @@ export function spendsOurXlm(signedXdr, networkPassphrase) {
  * `op_already_exists` is not a failure: two transfers to the same fresh
  * address can race, and the loser finds the work already done. Retrying that
  * forever would be the actual bug.
+ *
+ * Some refusals are final. A setup whose sequence number has been used, or
+ * whose time bound has passed, will be refused identically forever, and the
+ * only way forward is a new setup with a new signature from the user. Those
+ * come back as `dead`, so the watcher can drop the transaction and ask for
+ * another rather than retry a corpse. But "the sequence was used" includes
+ * the case where *this very transaction* used it, submitted once and
+ * unanswered, so before anything is called dead its hash is looked up on
+ * Horizon: found and succeeded means done, not dead.
  */
+
+/**
+ * Transaction-level codes that no retry of the same envelope can fix.
+ * Everything else, an underfunded funder, a fee too low for a busy ledger,
+ * a Horizon having a bad minute, is worth another go with the same bytes.
+ */
+export const DEAD_CODES = new Set([
+  'tx_bad_seq',
+  'tx_too_late',
+  'tx_bad_auth',
+  'tx_bad_auth_extra',
+  'tx_malformed',
+  'tx_missing_operation',
+  'tx_not_supported',
+]);
+
+/** Whether a transaction with this hash has already succeeded on the ledger. */
+export async function alreadyApplied(horizon, hash, { fetchImpl = fetch } = {}) {
+  const response = await fetchImpl(`${horizon}/transactions/${hash}`);
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(`horizon transactions: ${response.status}`);
+  const body = await response.json().catch(() => ({}));
+  return body.successful === true;
+}
+
 export async function submit(
   horizon,
   signedXdr,
@@ -212,6 +246,10 @@ export async function submit(
     toSend = tx.toXDR();
   }
 
+  // Signatures do not change the hash, so this names the transaction whether
+  // or not the funder just signed it, and whether or not it went out before.
+  const hash = TransactionBuilder.fromXDR(toSend, networkPassphrase).hash().toString('hex');
+
   const response = await fetchImpl(`${horizon}/transactions`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -219,18 +257,28 @@ export async function submit(
   });
 
   const body = await response.json().catch(() => ({}));
-  if (response.ok) return { ok: true, hash: body.hash, alreadyDone: false };
+  if (response.ok) return { ok: true, hash: body.hash ?? hash, alreadyDone: false, dead: false };
 
   const codes = body?.extras?.result_codes;
+  const transactionCode = codes?.transaction;
   const operations = codes?.operations || [];
-  const alreadyDone =
+  let alreadyDone =
     operations.length > 0 &&
     operations.every((code) => code === 'op_success' || code === 'op_already_exists');
 
+  let dead = false;
+  if (!alreadyDone && DEAD_CODES.has(transactionCode)) {
+    // A used sequence may have been used by us. Ask before giving up on it.
+    if (await alreadyApplied(horizon, hash, { fetchImpl })) alreadyDone = true;
+    else dead = true;
+  }
+
   return {
     ok: false,
+    hash,
     alreadyDone,
-    transactionCode: codes?.transaction,
+    dead,
+    transactionCode,
     operationCodes: operations,
     status: response.status,
   };

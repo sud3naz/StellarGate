@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {StellarBridge, ITokenMessengerV2} from "../src/StellarBridge.sol";
 import {StellarStrkey} from "../src/StellarStrkey.sol";
@@ -160,21 +161,21 @@ contract StellarBridgeTest is Test {
 
     function test_activationAddsFiveDollarsAndNothingElse() public {
         vm.prank(user);
-        (uint256 net, uint256 fee) = bridge.bridge(100e6, RECIPIENT, true, 5e6);
+        (uint256 net, uint256 fee) = bridge.bridge(100e6, RECIPIENT, true, 3e6);
 
-        assertEq(fee, 0.5e6 + 5e6, "the percentage plus the account");
-        assertEq(net, 94.5e6);
+        assertEq(fee, 0.5e6 + 3e6, "the percentage plus the account");
+        assertEq(net, 96.5e6);
     }
 
     /// @dev The three XLM are bought with this money, so it has to stay here
     /// rather than ride along to Stellar with the rest.
     function test_activationMoneyStaysToBuyTheXlm() public {
         vm.prank(user);
-        bridge.bridge(100e6, RECIPIENT, true, 5e6);
+        bridge.bridge(100e6, RECIPIENT, true, 3e6);
 
-        assertEq(usdc.balanceOf(address(bridge)), 5.5e6, "the percentage and the account");
-        assertEq(bridge.accruedFees(), 5.5e6, "withdrawable, and it funds the sponsor wallet");
-        assertEq(messenger.recorded().amount, 94.5e6, "only the rest is burned");
+        assertEq(usdc.balanceOf(address(bridge)), 3.5e6, "the percentage and the account");
+        assertEq(bridge.accruedFees(), 3.5e6, "withdrawable, and it funds the sponsor wallet");
+        assertEq(messenger.recorded().amount, 96.5e6, "only the rest is burned");
     }
 
     function test_quoteAgreesWithWhatIsCharged() public {
@@ -187,18 +188,18 @@ contract StellarBridgeTest is Test {
         assertEq(fee, quotedFee);
     }
 
-    /// @dev Five dollars of fee out of a four dollar transfer is not a
+    /// @dev Three dollars of fee out of a three dollar transfer is not a
     /// transfer, so the floor rises with the activation.
     function test_activationRaisesTheFloor() public {
         vm.prank(user);
         vm.expectRevert(
-            abi.encodeWithSelector(StellarBridge.AmountTooSmall.selector, uint256(4e6), uint256(6e6))
+            abi.encodeWithSelector(StellarBridge.AmountTooSmall.selector, uint256(3e6), uint256(4e6))
         );
-        bridge.bridge(4e6, RECIPIENT, true, 5e6);
+        bridge.bridge(3e6, RECIPIENT, true, 3e6);
 
         // The same amount is fine without it.
         vm.prank(user);
-        bridge.bridge(4e6, RECIPIENT, false, 0);
+        bridge.bridge(3e6, RECIPIENT, false, 0);
     }
 
     // --- the activation fee moves, within limits -------------------------
@@ -208,7 +209,7 @@ contract StellarBridgeTest is Test {
     /// @dev It has to move: the cost is three XLM and the fee is dollars.
     function test_ownerCanRepriceActivation() public {
         vm.expectEmit(false, false, false, true, address(bridge));
-        emit ActivationFeeUpdated(5e6, 8e6);
+        emit ActivationFeeUpdated(3e6, 8e6);
 
         vm.prank(owner);
         bridge.setActivationFee(8e6);
@@ -300,7 +301,10 @@ contract StellarBridgeTest is Test {
         assertEq(c.destinationDomain, 27, "Stellar");
         assertEq(c.mintRecipient, FORWARDER, "mints to the forwarder, not the user");
         assertEq(c.burnToken, address(usdc));
-        assertEq(c.destinationCaller, bytes32(0), "anyone may trigger the mint");
+        // Not zero. Zero lets anyone call receive_message on Stellar directly,
+        // which mints into the forwarder and never forwards. Only the
+        // forwarder may receive, and it does so inside mint_and_forward.
+        assertEq(c.destinationCaller, FORWARDER, "only the forwarder may receive the message");
         assertEq(c.maxFee, 1.99e6, "what Circle may take on delivery, not what they asked for");
         assertEq(c.minFinalityThreshold, 1000, "soft finality: Stellar does take fast transfers");
     }
@@ -448,10 +452,10 @@ contract StellarBridgeTest is Test {
 
     function test_emitsTheActivationItWasPaidFor() public {
         vm.expectEmit(true, false, false, true, address(bridge));
-        emit Bridged(user, RECIPIENT, 1000e6, 990e6, 10e6, 0x30, true);
+        emit Bridged(user, RECIPIENT, 1000e6, 992e6, 8e6, 0x30, true);
 
         vm.prank(user);
-        bridge.bridge(1000e6, RECIPIENT, true, 5e6);
+        bridge.bridge(1000e6, RECIPIENT, true, 3e6);
     }
 
     // --- fees and ownership ----------------------------------------------
@@ -490,6 +494,59 @@ contract StellarBridgeTest is Test {
         vm.prank(owner);
         vm.expectRevert(StellarBridge.ZeroAddress.selector);
         bridge.renounceOwnership();
+    }
+
+    // --- the pause ---------------------------------------------------------
+
+    /// @dev A pause stops money entering; it does not touch money already
+    /// burned, and it does not stop the owner doing anything else.
+    function test_pauseStopsNewBurns() public {
+        vm.prank(owner);
+        bridge.pause();
+
+        vm.prank(user);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        bridge.bridge(1_000e6, RECIPIENT, false, 0);
+        assertEq(messenger.callCount(), 0, "nothing reached Circle");
+    }
+
+    function test_unpauseResumesBurns() public {
+        vm.startPrank(owner);
+        bridge.pause();
+        bridge.unpause();
+        vm.stopPrank();
+
+        vm.prank(user);
+        bridge.bridge(1_000e6, RECIPIENT, false, 0);
+        assertEq(messenger.callCount(), 1);
+    }
+
+    function test_onlyOwnerPauses() public {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user));
+        bridge.pause();
+
+        vm.prank(owner);
+        bridge.pause();
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user));
+        bridge.unpause();
+    }
+
+    /// @dev Fees earned before the pause are still the treasury's, and the
+    /// owner can still reprice while stopped, so a pause is never a lockout.
+    function test_ownerKeepsWorkingWhilePaused() public {
+        vm.prank(user);
+        bridge.bridge(1_000e6, RECIPIENT, false, 0);
+
+        vm.startPrank(owner);
+        bridge.pause();
+        bridge.withdrawFees(5e6);
+        bridge.setActivationFee(4e6);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(treasury), 5e6);
+        assertEq(bridge.activationFee(), 4e6);
     }
 
     function test_constructorRejectsZeroForwarder() public {

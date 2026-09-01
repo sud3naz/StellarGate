@@ -100,10 +100,14 @@ fn setup() -> Fixture<'static> {
     token::StellarAssetClient::new(&env, &sac.address()).mint(&user, &1_000_000_000_000);
 
     let messenger_id = env.register(messenger::Messenger, ());
-    let bridge_id = env.register(ReverseBridge, ());
+    // Configured in the deploy itself, which is the whole point: there is no
+    // moment after this in which the contract exists and has no owner.
+    let bridge_id = env.register(
+        ReverseBridge,
+        (&owner, &treasury, &sac.address(), &messenger_id, 6u32),
+    );
 
     let bridge = ReverseBridgeClient::new(&env, &bridge_id);
-    bridge.initialise(&owner, &treasury, &sac.address(), &messenger_id, &6);
 
     let messenger = messenger::MessengerClient::new(&env, &messenger_id);
     Fixture {
@@ -254,16 +258,76 @@ fn the_user_pays_exactly_the_gross() {
     assert_eq!(before - f.usdc.balance(&f.user), 1_000_000_000);
 }
 
+/// There is no `initialise` any more, so there is nothing for a stranger to
+/// call first. What the constructor wrote is what the contract is.
 #[test]
-fn a_second_initialise_is_refused() {
+fn the_deploy_is_the_configuration() {
     let f = setup();
-    let other = Address::generate(&f.env);
+    let cfg = f.bridge.config();
+    assert_eq!(cfg.owner, f.owner);
+    assert_eq!(cfg.treasury, f.treasury);
+    assert_eq!(cfg.destination_domain, 6);
+    assert!(!f.bridge.paused());
+}
+
+#[test]
+fn a_pause_stops_new_burns_and_nothing_else() {
+    let f = setup();
+    f.bridge.bridge(&f.user, &1_000_000_000, &alice(&f.env));
+
+    f.bridge.pause();
+    assert!(f.bridge.paused());
+    assert_eq!(
+        f.bridge.try_bridge(&f.user, &1_000_000_000, &alice(&f.env)),
+        Err(Ok(Error::Paused))
+    );
+    // Fees earned before the pause are still the treasury's.
+    assert_eq!(f.bridge.withdraw_fees(), 5_000_000);
+
+    f.bridge.unpause();
+    f.bridge.bridge(&f.user, &1_000_000_000, &alice(&f.env));
+}
+
+#[test]
+fn strangers_cannot_pause_or_move_the_treasury_or_the_owner() {
+    let f = setup();
+    let stranger = Address::generate(&f.env);
+    f.env.set_auths(&[]);
+
+    assert!(f.bridge.try_pause().is_err());
+    assert!(f.bridge.try_unpause().is_err());
+    assert!(f.bridge.try_set_treasury(&stranger).is_err());
+    assert!(f.bridge.try_propose_owner(&stranger).is_err());
+}
+
+#[test]
+fn ownership_moves_in_two_steps() {
+    let f = setup();
+    let next = Address::generate(&f.env);
+    let impostor = Address::generate(&f.env);
+
+    f.bridge.propose_owner(&next);
+    assert_eq!(f.bridge.config().owner, f.owner, "an offer is not a handover");
 
     assert_eq!(
-        f.bridge
-            .try_initialise(&other, &other, &other, &other, &6),
-        Err(Ok(Error::AlreadyInitialised))
+        f.bridge.try_accept_ownership(&impostor),
+        Err(Ok(Error::NotProposedOwner))
     );
+
+    f.bridge.accept_ownership(&next);
+    assert_eq!(f.bridge.config().owner, next);
+}
+
+#[test]
+fn the_treasury_can_be_moved_by_the_owner() {
+    let f = setup();
+    let vault = Address::generate(&f.env);
+    f.bridge.bridge(&f.user, &1_000_000_000, &alice(&f.env));
+
+    f.bridge.set_treasury(&vault);
+    f.bridge.withdraw_fees();
+    assert_eq!(f.usdc.balance(&vault), 5_000_000);
+    assert_eq!(f.usdc.balance(&f.treasury), 0);
 }
 
 #[test]

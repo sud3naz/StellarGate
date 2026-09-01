@@ -146,7 +146,10 @@ anyone has heard of it or not.
 | TokenMessengerMinter | `CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP` |
 
 A first deployment, `CCYDQQ3R47IT2U4RO5ZRJKETUFYOR6IYMC5TEQLCTSMVHCNHZ7R77JTL`,
-never completed a transfer. It is superseded, and why is below.
+never completed a transfer. It is superseded, and why is below. The contract
+above is also behind the current source: it was configured by an `initialise`
+call after deploy, which has since become a constructor, and it has no pause.
+The next deployment carries both.
 
 | | |
 |---|---|

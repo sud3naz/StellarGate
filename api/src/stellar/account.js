@@ -8,25 +8,60 @@
  * to know what is missing before they ever burn anything.
  */
 
+import { MuxedAccount, StrKey } from '@stellar/stellar-sdk';
+
 const STROOPS = 10_000_000n;
+
+/**
+ * The `G…` under an `M…`, or the `G…` itself. A muxed address names an
+ * account plus a memo id; Horizon, `createAccount` and `changeTrust` all
+ * want the account, and asking Horizon for the `M…` directly is a 400.
+ */
+export function underlyingAccount(address) {
+  if (StrKey.isValidMed25519PublicKey(address)) {
+    return MuxedAccount.fromAddress(address, '0').baseAccount().accountId();
+  }
+  return address;
+}
 
 /**
  * Reserves are a network parameter, not a constant. They have been 0.5 XLM for
  * years and could stop being that by validator vote, so they are read.
+ *
+ * Read once in a while rather than once per question. Every `/setup` was
+ * asking Horizon for it two or three times, and a value that changes by
+ * validator vote does not change between one request and the next. Cached
+ * per Horizon for a few minutes; Horizon's per-address budget is the scarce
+ * thing here, not freshness.
  */
-export async function baseReserve(horizon, { fetchImpl = fetch } = {}) {
+const RESERVE_TTL_MS = 5 * 60 * 1000;
+const reserveCache = new Map();
+
+export async function baseReserve(horizon, { fetchImpl = fetch, now = () => Date.now() } = {}) {
+  const cached = reserveCache.get(horizon);
+  if (cached && cached.until > now()) return cached.value;
+
   const response = await fetchImpl(`${horizon}/ledgers?order=desc&limit=1`);
   if (!response.ok) throw new Error(`horizon ledgers: ${response.status}`);
   const body = await response.json();
   const stroops = body?._embedded?.records?.[0]?.base_reserve_in_stroops;
   if (typeof stroops !== 'number') throw new Error('horizon returned no base reserve');
-  return BigInt(stroops);
+
+  const value = BigInt(stroops);
+  reserveCache.set(horizon, { value, until: now() + RESERVE_TTL_MS });
+  return value;
+}
+
+/** For tests, and for an operator who knows the reserve just changed. */
+export function forgetBaseReserve(horizon = null) {
+  if (horizon === null) reserveCache.clear();
+  else reserveCache.delete(horizon);
 }
 
 /**
  * @param horizon  Horizon base URL.
- * @param address  The user's `G…` address. A muxed `M…` address shares the
- *                 underlying account, so callers pass the account itself.
+ * @param address  The user's `G…` address, or an `M…` which is looked up as
+ *                 the account underneath it.
  * @param asset    The USDC asset for this network.
  * @param amount   Optional, as a decimal string in USDC units. Used only to
  *                 check the transfer would actually fit; Stellar carries seven
@@ -34,7 +69,7 @@ export async function baseReserve(horizon, { fetchImpl = fetch } = {}) {
  *                 this boundary as decimal text rather than as integers.
  */
 export async function inspect(horizon, address, asset, { amount = null, fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(`${horizon}/accounts/${address}`);
+  const response = await fetchImpl(`${horizon}/accounts/${underlyingAccount(address)}`);
 
   if (response.status === 404) {
     const reserve = await baseReserve(horizon, { fetchImpl });

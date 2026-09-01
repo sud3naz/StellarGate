@@ -139,3 +139,50 @@ test('seven decimals survive the round trip', () => {
   assert.equal(toStroops('1').toString(), '10000000');
   assert.equal(toStroops('0.0000001').toString(), '1');
 });
+
+// --- the reserve is read once in a while, not once per question ------------
+
+test('the base reserve is cached per Horizon for a few minutes', async () => {
+  const { baseReserve, forgetBaseReserve } = await import('../src/stellar/account.js');
+  forgetBaseReserve();
+
+  let asked = 0;
+  const horizon = async () => {
+    asked += 1;
+    return { ok: true, json: async () => ({ _embedded: { records: [{ base_reserve_in_stroops: 5_000_000 }] } }) };
+  };
+
+  let at = 1_000_000;
+  const now = () => at;
+  assert.equal(await baseReserve('https://h.example', { fetchImpl: horizon, now }), 5_000_000n);
+  assert.equal(await baseReserve('https://h.example', { fetchImpl: horizon, now }), 5_000_000n);
+  assert.equal(asked, 1, 'the second answer came from memory');
+
+  at += 6 * 60 * 1000;
+  await baseReserve('https://h.example', { fetchImpl: horizon, now });
+  assert.equal(asked, 2, 'and was asked again once it aged');
+
+  await baseReserve('https://other.example', { fetchImpl: horizon, now });
+  assert.equal(asked, 3, 'another Horizon is another question');
+  forgetBaseReserve();
+});
+
+test('a muxed address is looked up as the account underneath it', async () => {
+  const { MuxedAccount, Account } = await import('@stellar/stellar-sdk');
+  const { underlyingAccount } = await import('../src/stellar/account.js');
+  const muxed = new MuxedAccount(new Account(ADDRESS, '0'), '7').accountId();
+  assert.equal(underlyingAccount(muxed), ADDRESS);
+  assert.equal(underlyingAccount(ADDRESS), ADDRESS);
+
+  let asked = null;
+  const horizon = async (url) => {
+    asked = url;
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  // A 404 walks on to the reserve; refuse that so only the account URL matters.
+  const result = await inspect(HORIZON, muxed, asset, {
+    fetchImpl: async (url) => (url.includes('/accounts/') ? horizon(url) : { ok: true, json: async () => ({ _embedded: { records: [{ base_reserve_in_stroops: 5_000_000 }] } }) }),
+  });
+  assert.ok(asked.endsWith(`/accounts/${ADDRESS}`), 'Horizon was asked about the G, not the M');
+  assert.equal(result.needs, 'account+trustline');
+});

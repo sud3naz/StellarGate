@@ -14,7 +14,7 @@
 
 import { Account } from '@stellar/stellar-sdk';
 
-import { inspect, baseReserve } from './account.js';
+import { inspect, baseReserve, underlyingAccount } from './account.js';
 import { buildActivation, buildTopUp, buildTrustline, plan } from './activation.js';
 
 async function loadChannel(horizon, address, fetchImpl) {
@@ -52,7 +52,10 @@ export async function buildSetupFor(
   const channel = await loadChannel(horizon, channelSigner.publicKey(), fetchImpl);
   const shared = {
     channel,
-    user: recipient,
+    // The operations name the account, never the memo. A muxed recipient is
+    // paid through the forwarder as `M…`; what gets created and what holds
+    // the trustline is the `G…` underneath.
+    user: underlyingAccount(recipient),
     asset,
     networkPassphrase,
     timeoutSeconds,

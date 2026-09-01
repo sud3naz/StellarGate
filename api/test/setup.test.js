@@ -170,3 +170,15 @@ test('no proof means the funder never signs', async () => {
     }),
   );
 });
+
+test('a muxed recipient gets its account created and its trustline on the G underneath', async () => {
+  const { MuxedAccount, Account } = await import('@stellar/stellar-sdk');
+  const muxed = new MuxedAccount(new Account(userKey.publicKey(), '0'), '99').accountId();
+
+  const built = await buildSetupFor(muxed, options(horizonWith(null)));
+  const tx = TransactionBuilder.fromXDR(built.xdr, passphrase);
+
+  assert.equal(built.needed, 'activation');
+  assert.equal(tx.operations[0].destination, userKey.publicKey(), 'createAccount wants an account, not a memo');
+  assert.equal(tx.operations[1].source, userKey.publicKey(), 'so does the trustline');
+});

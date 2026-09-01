@@ -168,3 +168,106 @@ test('a preflight is answered rather than looked up as a route', async () => {
   assert.equal(res.headers['access-control-allow-origin'], '*');
   assert.match(res.headers['access-control-allow-headers'], /content-type/);
 });
+
+// --- channels and dropped setups --------------------------------------------
+
+test('a pool with no free channel is a 503 with an invitation, not a refusal', async () => {
+  const { NoFreeChannel } = await import('../src/stellar/channels.js');
+  const handle = createHandler({
+    store: new Store(),
+    verifyBurn: async () => null,
+    buildSetup: async () => {
+      throw new NoFreeChannel('all 2 channel accounts are busy');
+    },
+  });
+
+  const result = await handle({ method: 'POST', path: '/setup', body: { recipient: RECIPIENT } });
+
+  assert.equal(result.status, 503);
+  assert.equal(result.body.retry, true);
+  assert.match(result.body.error, /busy/);
+});
+
+test('a dropped setup is visible, so the page can ask for another', async () => {
+  const { store, handle } = harness();
+  await handle(post({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR' }));
+  store.dropSetup(TX, 'tx_bad_seq');
+
+  const before = await handle({ method: 'GET', path: `/transfers/${TX}` });
+  assert.equal(before.body.hasSetup, false);
+  assert.equal(before.body.setupFailure.reason, 'tx_bad_seq');
+
+  // The replacement is taken through the same door as the first.
+  const posted = await handle(post({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR-2' }));
+  assert.equal(posted.status, 200);
+  assert.equal(posted.body.hasSetup, true);
+
+  const after = await handle({ method: 'GET', path: `/transfers/${TX}` });
+  assert.equal(after.body.setupFailure, null);
+  assert.equal(store.get(TX).setupXdr, 'XDR-2');
+});
+
+// --- the door checks the envelope ------------------------------------------
+
+test('a setup this server did not build is refused at the door, with the reason', async () => {
+  const { ForeignSetup } = await import('../src/stellar/verify.js');
+  const store = new Store();
+  const handle = createHandler({
+    store,
+    verifyBurn: async () => ({ txHash: TX, stellarRecipient: RECIPIENT, activate: true }),
+    verifySetup: (xdr) => {
+      if (xdr !== 'OURS') throw new ForeignSetup('refusing to sign this setup: it pays the wrong person');
+    },
+  });
+
+  const refused = await handle(post({ txHash: TX, recipient: RECIPIENT, setupXdr: 'THEIRS' }));
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /wrong person/);
+  assert.equal(store.get(TX), null, 'nothing was written down');
+
+  const taken = await handle(post({ txHash: TX, recipient: RECIPIENT, setupXdr: 'OURS' }));
+  assert.equal(taken.status, 200);
+  assert.equal(store.get(TX).setupXdr, 'OURS');
+});
+
+// --- the rate limit ---------------------------------------------------------
+
+test('the costly routes are rate limited per caller, and say when to come back', async () => {
+  const { createLimiter } = await import('../src/ratelimit.js');
+  const { handle } = harness(async () => null);
+  const limited = createHandler({
+    store: new Store(),
+    verifyBurn: async () => null,
+    buildSetup: async () => null,
+    limiter: createLimiter({ perKey: { limit: 2, windowMs: 60_000 } }),
+  });
+
+  const ask = (ip) => limited({ method: 'POST', path: '/setup', body: { recipient: RECIPIENT }, ip });
+
+  assert.equal((await ask('1.1.1.1')).status, 200);
+  assert.equal((await ask('1.1.1.1')).status, 200);
+  const refused = await ask('1.1.1.1');
+  assert.equal(refused.status, 429);
+  assert.equal(refused.body.retry, true);
+  assert.ok(refused.body.retryAfterSeconds > 0);
+
+  assert.equal((await ask('2.2.2.2')).status, 200, 'somebody else is not punished for it');
+  assert.equal((await limited({ method: 'GET', path: '/health', ip: '1.1.1.1' })).status, 200, 'reads are free');
+  void handle;
+});
+
+test('the caller is read from the proxy header, first entry, only when the proxy is trusted', async () => {
+  const { callerAddress } = await import('../src/server.js');
+  const req = { headers: { 'x-forwarded-for': '9.9.9.9, 10.0.0.1' }, socket: { remoteAddress: '127.0.0.1' } };
+
+  assert.equal(callerAddress(req), '9.9.9.9');
+  assert.equal(callerAddress(req, { trustProxy: false }), '127.0.0.1');
+  assert.equal(callerAddress({ headers: {}, socket: { remoteAddress: '5.5.5.5' } }), '5.5.5.5');
+});
+
+test('progress does not say who the money went to', async () => {
+  const { handle } = harness();
+  await handle(post({ txHash: TX, recipient: RECIPIENT, setupXdr: 'XDR' }));
+  const result = await handle({ method: 'GET', path: `/transfers/${TX}` });
+  assert.equal(result.body.recipient, undefined, 'a hash is public; the address behind it is not');
+});
