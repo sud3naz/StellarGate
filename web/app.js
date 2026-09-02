@@ -85,7 +85,7 @@ const CONFIG = {
     // origin is: the page checks the burn it is about to sign against this,
     // and asking the watcher which contract it meant would let a tampered one
     // name its own and answer its own exam.
-    bridgeContract: 'CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR',
+    bridgeContract: 'CBIMZLTGCDUMC4DU5A24VCRUTWUVQTZZ7OHMMLUSVU423GA5OWJLPWHJ',
   },
 
   // Starting values for the contract's numbers, replaced by what the contract

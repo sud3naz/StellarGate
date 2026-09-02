@@ -141,15 +141,16 @@ anyone has heard of it or not.
 
 | | |
 |---|---|
-| `ReverseBridge` | [`CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR`](https://stellar.expert/explorer/testnet/contract/CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR) |
+| `ReverseBridge` | [`CBIMZLTGCDUMC4DU5A24VCRUTWUVQTZZ7OHMMLUSVU423GA5OWJLPWHJ`](https://stellar.expert/explorer/testnet/contract/CBIMZLTGCDUMC4DU5A24VCRUTWUVQTZZ7OHMMLUSVU423GA5OWJLPWHJ) (2 Sep 2026, constructor-configured, pausable) |
+| previous `ReverseBridge` | `CCWMXUFXXYL6HEL4BYXRPLUXPGI2DEYEOP7TZX7EXWZBOM7WAWWDMWHR`, the `initialise`-era contract the transfers below went through |
 | USDC (SAC, testnet) | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
 | TokenMessengerMinter | `CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP` |
 
 A first deployment, `CCYDQQ3R47IT2U4RO5ZRJKETUFYOR6IYMC5TEQLCTSMVHCNHZ7R77JTL`,
-never completed a transfer. It is superseded, and why is below. The contract
-above is also behind the current source: it was configured by an `initialise`
-call after deploy, which has since become a constructor, and it has no pause.
-The next deployment carries both.
+never completed a transfer. It is superseded, and why is below. The
+`CCWMX…` contract is behind the current source too: it was configured by an
+`initialise` call after deploy, which has since become a constructor, and it
+has no pause. `CBIMZ…` above is the current source, deployed 2 September.
 
 | | |
 |---|---|
